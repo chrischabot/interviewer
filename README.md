@@ -98,27 +98,6 @@ This is not transcription. This is translation: from the meandering river of spo
 
 ---
 
-## Project Structure
-
-```
-Interviewer/
-├── App/                      # Application entry and coordination
-├── Views/                    # SwiftUI interface
-│   ├── HomeView              # Topic and goal capture
-│   ├── PlanEditorView        # Interview blueprint editing
-│   ├── InterviewView         # Live voice conversation
-│   ├── AnalysisView          # Post-interview insights
-│   ├── DraftView             # Generated essay preview
-│   └── SettingsView          # API key and device configuration
-├── Agents/                   # Specialized intelligence actors
-├── Networking/               # OpenAI clients and audio engine
-├── Models/                   # SwiftData persistence models
-├── State/                    # Session management
-└── Security/                 # Keychain integration
-```
-
----
-
 ## Platform Requirements
 
 - macOS 26 (Tahoe) or iOS 26

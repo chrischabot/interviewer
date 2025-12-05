@@ -39,11 +39,6 @@ struct VoiceOrbView: View {
                     outerGlow.opacity = glowOpacity
                     outerGlow.addFilter(.blur(radius: 20))
 
-                    let glowGradient = Gradient(colors: [
-                        isActive ? .cyan : .blue,
-                        isActive ? .purple.opacity(0.3) : .cyan.opacity(0.2),
-                        .clear
-                    ])
                     outerGlow.fill(
                         Circle().path(in: CGRect(
                             x: center.x - glowRadius,
@@ -63,16 +58,6 @@ struct VoiceOrbView: View {
                 // Layer 2: Rotating ring (creates "thinking" effect)
                 let ringRadius = baseRadius * combinedScale * 1.15
                 let ringRotation = time * (isActive ? 2.0 : 0.5)
-
-                var ringContext = context
-                ringContext.opacity = isActive ? 0.6 + Double(clampedLevel) * 0.4 : 0.3
-
-                let ringRect = CGRect(
-                    x: center.x - ringRadius,
-                    y: center.y - ringRadius,
-                    width: ringRadius * 2,
-                    height: ringRadius * 2
-                )
 
                 // Draw segmented ring
                 for i in 0..<6 {

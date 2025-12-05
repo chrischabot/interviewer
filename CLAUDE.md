@@ -6,6 +6,24 @@ A **fully native Swift app** (macOS 26 Tahoe + iOS 26) that interviews users pod
 
 **Core Vision**: "Talk for 5-15 minutes about a deep topic. The app interviews you, live-researches threads, tracks insights, and generates a strong narrative that can ship as a blog post."
 
+**Tagline**: *"You don't know what you know, until you are asked."*
+
+---
+
+## Tone of Voice
+
+When writing prose for this project—README, user-facing copy, essay output—channel the style of an **eloquent old-style journalist**: witty, succinct, to the point, and colorfully descriptive.
+
+**Characteristics:**
+- **Narrative over bullet points** when explaining concepts
+- **Vivid metaphors** that illuminate rather than obscure (agents as "a symphony," "a maestro before an orchestra")
+- **Short, punchy sentences** mixed with longer flowing ones for rhythm
+- **Respect for the reader's intelligence**—explain *why* something matters, not just *what* it does
+- **A touch of gravitas** when discussing ideas ("The tragedy of expertise is that its possessor often cannot see it clearly enough to share it")
+- **Avoid jargon** when plain language serves; use technical terms only when precision demands
+
+The goal: prose that sounds like it was written by someone who genuinely cares about ideas and has thought carefully about how to express them.
+
 ---
 
 ## Tech Stack
