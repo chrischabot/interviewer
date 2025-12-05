@@ -142,9 +142,9 @@ struct ContentView: View {
                     case .interview(let planId):
                         InterviewView(planId: planId)
                     case .analysis(let sessionId):
-                        AnalysisPlaceholderView(sessionId: sessionId)
+                        AnalysisView(sessionId: sessionId)
                     case .draft(let sessionId):
-                        DraftPlaceholderView(sessionId: sessionId)
+                        DraftView(sessionId: sessionId)
                     case .settings:
                         SettingsView()
                     }
@@ -184,40 +184,76 @@ struct HomeView: View {
     @Environment(\.modelContext) private var modelContext
 
     @Query(sort: \Plan.createdAt, order: .reverse) private var recentPlans: [Plan]
-    @Query(sort: \InterviewSession.startedAt, order: .reverse) private var recentSessions: [InterviewSession]
 
     @State private var topic = ""
-    @State private var context = ""
-    @State private var targetMinutes = 10.0
     @State private var isGenerating = false
     @State private var generationStage: PlanGenerationStage = .idle
     @State private var errorMessage: String?
+    @FocusState private var isInputFocused: Bool
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 24) {
-                // Header
-                headerSection
+        VStack(spacing: 0) {
+            Spacer()
 
-                // New Interview Section
-                newInterviewSection
+            // Main input area - centered
+            VStack(spacing: 32) {
+                // Prompt
+                Text("What do you want to talk about?")
+                    .font(.title2)
+                    .foregroundStyle(.secondary)
 
-                // Recent Sessions
-                if !recentSessions.isEmpty {
-                    recentSessionsSection
+                // Input box
+                HStack(spacing: 12) {
+                    TextField("Enter a topic...", text: $topic, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(.body)
+                        .lineLimit(1...4)
+                        .focused($isInputFocused)
+                        .disabled(isGenerating)
+                        .onSubmit {
+                            if !topic.isEmpty && appState.hasAPIKey && !isGenerating {
+                                generatePlan()
+                            }
+                        }
+
+                    // Send button
+                    Button {
+                        generatePlan()
+                    } label: {
+                        Image(systemName: isGenerating ? "stop.fill" : "arrow.up")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 32, height: 32)
+                            .background(
+                                Circle()
+                                    .fill(canSubmit ? Color.accentColor : Color.gray.opacity(0.3))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canSubmit)
                 }
-
-                // Recent Plans
-                if !recentPlans.isEmpty {
-                    recentPlansSection
-                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 24)
+                        .fill(Color.primary.opacity(0.05))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 24)
+                                .stroke(Color.primary.opacity(0.1), lineWidth: 1)
+                        )
+                )
+                .frame(maxWidth: 600)
             }
-            .padding()
+            .padding(.horizontal, 32)
+
+            Spacer()
+
+            // Recent plans - compact footer
+            if !recentPlans.isEmpty {
+                recentPlansFooter
+            }
         }
-        .navigationTitle("Interviewer")
-        #if os(iOS)
-        .navigationBarTitleDisplayMode(.large)
-        #endif
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -242,113 +278,50 @@ struct HomeView: View {
         }
     }
 
-    // MARK: - Sections
+    private var canSubmit: Bool {
+        !topic.isEmpty && appState.hasAPIKey && !isGenerating
+    }
 
-    private var headerSection: some View {
-        VStack(spacing: 8) {
-            Text("Voice-Driven Thinking Partner")
-                .font(.headline)
+    private var recentPlansFooter: some View {
+        VStack(spacing: 16) {
+            Text("Recent conversations")
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            Text("Talk through your ideas and get a polished blog post")
-                .font(.subheadline)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
-        }
-        .padding(.vertical)
-    }
+            VStack(spacing: 8) {
+                ForEach(recentPlans.prefix(5)) { plan in
+                    Button {
+                        appState.navigate(to: .planning(planId: plan.id))
+                    } label: {
+                        HStack {
+                            Text(plan.topic)
+                                .font(.subheadline)
+                                .lineLimit(1)
 
-    private var newInterviewSection: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("New Interview")
-                    .font(.title2)
-                    .fontWeight(.semibold)
+                            Spacer()
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Topic")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                            Text(plan.createdAt, style: .relative)
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
 
-                    TextField("What do you want to talk about?", text: $topic)
-                        .textFieldStyle(.roundedBorder)
-                        .disabled(isGenerating)
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Context (optional)")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-
-                    TextField("Any background or constraints...", text: $context, axis: .vertical)
-                        .textFieldStyle(.roundedBorder)
-                        .lineLimit(3...6)
-                        .disabled(isGenerating)
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Duration")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-
-                        Spacer()
-
-                        Text("\(Int(targetMinutes)) minutes")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                    }
-
-                    Slider(value: $targetMinutes, in: 5...20, step: 1)
-                        .disabled(isGenerating)
-                }
-
-                Button {
-                    generatePlan()
-                } label: {
-                    HStack {
-                        if isGenerating {
-                            ProgressView()
-                                .scaleEffect(0.8)
-                        } else {
-                            Image(systemName: "wand.and.stars")
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
                         }
-                        Text(isGenerating ? "Generating Plan..." : "Generate Interview Plan")
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color.primary.opacity(0.03))
+                        )
                     }
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(topic.isEmpty || !appState.hasAPIKey || isGenerating)
-            }
-            .padding()
-        }
-    }
-
-    private var recentSessionsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Recent Sessions")
-                .font(.title3)
-                .fontWeight(.semibold)
-
-            ForEach(recentSessions.prefix(3)) { session in
-                SessionRowView(session: session)
-            }
-        }
-    }
-
-    private var recentPlansSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Recent Plans")
-                .font(.title3)
-                .fontWeight(.semibold)
-
-            ForEach(recentPlans.prefix(3)) { plan in
-                PlanRowView(plan: plan) {
-                    appState.navigate(to: .planning(planId: plan.id))
+                    .buttonStyle(.plain)
                 }
             }
+            .frame(maxWidth: 500)
         }
+        .padding(.horizontal, 32)
+        .padding(.bottom, 32)
     }
 
     // MARK: - Actions
@@ -357,6 +330,7 @@ struct HomeView: View {
         isGenerating = true
         generationStage = .analyzing
         errorMessage = nil
+        isInputFocused = false
 
         Task {
             do {
@@ -367,8 +341,8 @@ struct HomeView: View {
                 // Stage 2: Designing structure (API call happens here)
                 let response = try await AgentCoordinator.shared.generatePlan(
                     topic: topic,
-                    context: context,
-                    targetMinutes: Int(targetMinutes)
+                    context: "",
+                    targetMinutes: 10
                 )
 
                 // Stage 3: Generating questions
@@ -378,7 +352,7 @@ struct HomeView: View {
                 // Convert response to SwiftData model
                 let plan = response.toPlan(
                     topic: topic,
-                    targetSeconds: Int(targetMinutes) * 60
+                    targetSeconds: 10 * 60
                 )
 
                 // Stage 4: Finalizing
@@ -395,8 +369,6 @@ struct HomeView: View {
 
                     // Clear form
                     topic = ""
-                    context = ""
-                    targetMinutes = 10.0
                     isGenerating = false
                     generationStage = .idle
                 }
@@ -853,6 +825,7 @@ struct InterviewView: View {
     @Query private var plans: [Plan]
     @State private var sessionManager = InterviewSessionManager()
     @State private var showEndConfirmation = false
+    @State private var savedSessionId: UUID?
 
     private var plan: Plan? {
         plans.first { $0.id == planId }
@@ -888,7 +861,7 @@ struct InterviewView: View {
         .confirmationDialog("End Interview?", isPresented: $showEndConfirmation) {
             Button("End Interview", role: .destructive) {
                 Task {
-                    await sessionManager.endSession()
+                    await endAndSaveSession()
                 }
             }
             Button("Cancel", role: .cancel) {}
@@ -915,9 +888,7 @@ struct InterviewView: View {
 
             // Main content
             switch sessionManager.state {
-            case .idle:
-                startScreen(plan)
-            case .connecting:
+            case .idle, .connecting:
                 connectingScreen
             case .active, .paused:
                 activeInterviewView
@@ -927,19 +898,34 @@ struct InterviewView: View {
                 endedScreen
             }
         }
+        .onAppear {
+            // Auto-start session when view appears
+            if sessionManager.state == .idle {
+                Task {
+                    await sessionManager.startSession(plan: plan)
+                }
+            }
+        }
     }
 
     // MARK: - Timer Header
 
     private var timerHeader: some View {
-        HStack {
+        HStack(spacing: 12) {
             // Voice orb - shows AI state
             VoiceOrbView(
                 audioLevel: sessionManager.assistantAudioLevel,
                 isActive: sessionManager.isAssistantSpeaking,
                 isListening: sessionManager.isUserSpeaking
             )
-            .padding(.leading, 4)
+
+            // Topic title
+            if let topic = plan?.topic {
+                Text(topic)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+            }
 
             Spacer()
 
@@ -951,52 +937,6 @@ struct InterviewView: View {
         }
         .padding()
         .background(.bar)
-    }
-
-    // MARK: - Start Screen
-
-    private func startScreen(_ plan: Plan) -> some View {
-        VStack(spacing: 24) {
-            Spacer()
-
-            VStack(spacing: 24) {
-                Image(systemName: "mic.circle.fill")
-                    .font(.system(size: 80))
-                    .foregroundStyle(.blue)
-
-                VStack(spacing: 8) {
-                    Text("Ready to Interview")
-                        .font(.title2)
-                        .fontWeight(.semibold)
-
-                    Text(plan.topic)
-                        .font(.headline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-
-                Text("The AI interviewer will ask questions based on your plan. Speak naturally and the conversation will flow automatically.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-
-                Button {
-                    Task {
-                        await sessionManager.startSession(plan: plan)
-                    }
-                } label: {
-                    Label("Start Interview", systemImage: "play.fill")
-                        .font(.headline)
-                        .frame(maxWidth: 200)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-            }
-            .frame(maxWidth: 500)
-
-            Spacer()
-        }
-        .padding()
     }
 
     // MARK: - Connecting Screen
@@ -1130,14 +1070,70 @@ struct InterviewView: View {
             .font(.subheadline)
             .foregroundStyle(.secondary)
 
-            Button("Back to Plan") {
-                appState.navigateBack()
+            if let sessionId = savedSessionId {
+                Button {
+                    // Store notes in coordinator before navigating
+                    Task {
+                        await AgentCoordinator.shared.storeNotes(sessionManager.currentNotes)
+                    }
+                    appState.navigate(to: .analysis(sessionId: sessionId))
+                } label: {
+                    Label("Continue to Analysis", systemImage: "arrow.right")
+                }
+                .buttonStyle(.borderedProminent)
+            } else {
+                Button("Back to Plan") {
+                    appState.navigateBack()
+                }
+                .buttonStyle(.bordered)
             }
-            .buttonStyle(.borderedProminent)
 
             Spacer()
         }
         .padding()
+    }
+
+    // MARK: - Session Management
+
+    private func endAndSaveSession() async {
+        await sessionManager.endSession()
+
+        // Save session to SwiftData
+        guard let plan else { return }
+
+        let session = InterviewSession(
+            startedAt: Date().addingTimeInterval(-Double(sessionManager.elapsedSeconds)),
+            endedAt: Date(),
+            elapsedSeconds: sessionManager.elapsedSeconds,
+            plan: plan
+        )
+
+        // Save transcript as utterances
+        for entry in sessionManager.transcript {
+            let utterance = Utterance(
+                speaker: entry.speaker,
+                text: entry.text,
+                timestamp: entry.timestamp
+            )
+            utterance.session = session
+            session.utterances.append(utterance)
+        }
+
+        // Save notes state
+        let notesModel = NotesStateModel()
+        notesModel.keyIdeas = sessionManager.currentNotes.keyIdeas
+        notesModel.stories = sessionManager.currentNotes.stories
+        notesModel.claims = sessionManager.currentNotes.claims
+        notesModel.gaps = sessionManager.currentNotes.gaps
+        notesModel.contradictions = sessionManager.currentNotes.contradictions
+        notesModel.possibleTitles = sessionManager.currentNotes.possibleTitles
+        session.notesState = notesModel
+
+        await MainActor.run {
+            modelContext.insert(session)
+            try? modelContext.save()
+            savedSessionId = session.id
+        }
     }
 }
 
@@ -1223,25 +1219,6 @@ struct CircularProgressView: View {
     }
 }
 
-// MARK: - Placeholder Views (to be implemented in later phases)
-
-struct AnalysisPlaceholderView: View {
-    let sessionId: UUID
-
-    var body: some View {
-        Text("Analysis View - Coming in Phase 5")
-            .navigationTitle("Analysis")
-    }
-}
-
-struct DraftPlaceholderView: View {
-    let sessionId: UUID
-
-    var body: some View {
-        Text("Draft View - Coming in Phase 5")
-            .navigationTitle("Draft")
-    }
-}
 
 #Preview {
     ContentView()

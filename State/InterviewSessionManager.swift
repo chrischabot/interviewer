@@ -47,11 +47,20 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
     // Plan reference
     var plan: Plan?
 
+    // Agent state (Phase 4)
+    var currentNotes: NotesState = .empty
+    var researchItems: [ResearchItem] = []
+    var latestDecision: OrchestratorDecision?
+    var currentPhase: String = "opening"
+    var agentActivity: [String: Double] = [:]
+    var isProcessingAgents = false
+
     // Private
     private let realtimeClient = RealtimeClient()
     private let audioEngine = AudioEngine()
     private var timer: Timer?
     private var audioLevelTimer: Timer?
+    private var agentTimer: Timer?  // Periodic agent processing
     private var currentAssistantEntry: TranscriptEntry?
     private var pendingAssistantText: String = ""  // Accumulate transcript until audio done
     private var lastAssistantAudioAt: Date?  // Track when last AI audio chunk was received
@@ -63,6 +72,8 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
         return Date().timeIntervalSince(lastAudioAt) < audioBleedGuardSeconds
     }
     private var hasSentAudioSinceLastResponse = false  // Track if we've sent audio (to avoid empty buffer error)
+    private let agentProcessingInterval: TimeInterval = 10.0  // Process agents every 10 seconds
+    private var planSnapshot: PlanSnapshot?  // Cached snapshot for agent processing
 
     init() {
         Task {
@@ -87,6 +98,18 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
         self.errorMessage = nil
         self.isAssistantSpeaking = true  // AI will start speaking immediately with greeting
         self.lastAssistantAudioAt = Date()  // Pretend we just received audio to block mic initially
+
+        // Reset agent state
+        self.currentNotes = .empty
+        self.researchItems = []
+        self.latestDecision = nil
+        self.currentPhase = "opening"
+        self.agentActivity = [:]
+        self.isProcessingAgents = false
+        self.planSnapshot = plan.toSnapshot()
+
+        // Initialize agent coordinator for new session
+        await AgentCoordinator.shared.startNewSession()
 
         state = .connecting
 
@@ -152,7 +175,7 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
         state = .ending
 
         stopTimer()
-        audioEngine.stopCapturing()
+        audioEngine.shutdown()  // Fully stop audio engine when ending (not just pausing)
         await realtimeClient.disconnect()
 
         state = .ended
@@ -190,6 +213,14 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
                 self.assistantAudioLevel = self.audioEngine.audioLevel
             }
         }
+
+        // Agent processing timer (every 10 seconds)
+        agentTimer = Timer.scheduledTimer(withTimeInterval: agentProcessingInterval, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            Task { @MainActor in
+                await self.processAgentUpdate()
+            }
+        }
     }
 
     private func stopTimer() {
@@ -197,7 +228,58 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
         timer = nil
         audioLevelTimer?.invalidate()
         audioLevelTimer = nil
+        agentTimer?.invalidate()
+        agentTimer = nil
         assistantAudioLevel = 0
+    }
+
+    // MARK: - Agent Processing
+
+    private func processAgentUpdate() async {
+        // Skip if not active or already processing
+        guard state == .active, !isProcessingAgents else { return }
+
+        // Skip if no transcript yet (nothing to analyze)
+        guard !transcript.isEmpty else { return }
+
+        // Need plan snapshot
+        guard let snapshot = planSnapshot else { return }
+
+        isProcessingAgents = true
+        NSLog("[InterviewSession] 🤖 Starting agent processing cycle...")
+
+        do {
+            let result = try await AgentCoordinator.shared.processLiveUpdate(
+                transcript: transcript,
+                currentNotes: currentNotes,
+                plan: snapshot,
+                elapsedSeconds: elapsedSeconds,
+                targetSeconds: targetSeconds
+            )
+
+            // Update state with results
+            currentNotes = result.notes
+            researchItems.append(contentsOf: result.newResearchItems)
+            latestDecision = result.decision
+            currentPhase = result.decision.phase
+            currentQuestion = result.decision.nextQuestion.text
+
+            // Update agent activity from coordinator
+            agentActivity = await AgentCoordinator.shared.getAgentActivity()
+
+            // Update Realtime API instructions with new guidance
+            try await realtimeClient.updateInstructions(result.interviewerInstructions)
+
+            NSLog("[InterviewSession] ✅ Agent processing complete - Phase: %@, Next Q: %@",
+                  result.decision.phase,
+                  String(result.decision.nextQuestion.text.prefix(50)))
+
+        } catch {
+            NSLog("[InterviewSession] ⚠️ Agent processing error: %@", error.localizedDescription)
+            // Don't surface to UI - agent failures shouldn't interrupt the interview
+        }
+
+        isProcessingAgents = false
     }
 
     // MARK: - Instructions Builder
@@ -406,8 +488,6 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
         }
 
         if shouldSkip {
-            // Just log the skip reason (will be throttled by logging system)
-            NSLog("[AudioCapture] ⏸️ Skipping audio: %@", reason)
             return
         }
 

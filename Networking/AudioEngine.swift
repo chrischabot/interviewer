@@ -270,22 +270,9 @@ final class AudioEngine: @unchecked Sendable {
         NSLog("[AudioEngine] 🎤 Input format: %.0fHz, %d channels", inputFormat.sampleRate, inputFormat.channelCount)
         NSLog("[AudioEngine] 🎤 Output format: %.0fHz, %d channels (24kHz PCM16 for API)", outputFormat.sampleRate, outputFormat.channelCount)
 
-        // Install tap on input node - use a dedicated queue for the callback
-        var tapCallCount = 0
-        var lastTapLog = Date()
+        // Install tap on input node
         inputNode.installTap(onBus: 0, bufferSize: 4800, format: inputFormat) { [weak self] buffer, _ in
-            guard let self = self, let converter = self.audioConverter else {
-                NSLog("[AudioEngine] ⚠️ Tap callback but no self or converter")
-                return
-            }
-
-            tapCallCount += 1
-            // Log tap activity every 5 seconds
-            let now = Date()
-            if now.timeIntervalSince(lastTapLog) > 5.0 {
-                NSLog("[AudioEngine] 🎙️ Tap active: %d calls, buffer frames: %d, channels: %d", tapCallCount, buffer.frameLength, buffer.format.channelCount)
-                lastTapLog = now
-            }
+            guard let self = self, let converter = self.audioConverter else { return }
 
             // If multi-channel (voice processing), extract channel 0 first
             let monoBuffer: AVAudioPCMBuffer
@@ -296,19 +283,12 @@ final class AudioEngine: @unchecked Sendable {
             }
 
             // Resample to 24kHz and convert to PCM16
-            let audioData = self.resampleAndConvert(monoBuffer, converter: converter, outputFormat: outputFormat)
+            guard let audioData = self.resampleAndConvert(monoBuffer, converter: converter, outputFormat: outputFormat),
+                  let delegate = self.delegate else { return }
 
-            if let data = audioData, let delegate = self.delegate {
-                // Dispatch off the audio thread before calling delegate
-                self.audioQueue.async {
-                    Task {
-                        await delegate.audioEngine(self, didCaptureAudio: data)
-                    }
-                }
-            } else if audioData == nil {
-                // Log conversion failure occasionally
-                if tapCallCount % 100 == 0 {
-                    NSLog("[AudioEngine] ⚠️ Audio conversion returned nil")
+            self.audioQueue.async {
+                Task {
+                    await delegate.audioEngine(self, didCaptureAudio: audioData)
                 }
             }
         }
@@ -334,7 +314,9 @@ final class AudioEngine: @unchecked Sendable {
         guard isCapturing else { return }
 
         engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
+        // Note: We do NOT call engine.stop() here because that disconnects all nodes
+        // including the playerNode, which breaks audio playback on resume.
+        // The engine continues running for playback.
         isCapturing = false
         audioConverter = nil
 
@@ -345,6 +327,14 @@ final class AudioEngine: @unchecked Sendable {
                 }
             }
         }
+    }
+
+    /// Fully stop the audio engine (call when ending session, not when pausing)
+    func shutdown() {
+        stopCapturing()
+        playerNode.stop()
+        engine.stop()
+        NSLog("[AudioEngine] 🛑 Audio engine fully shut down")
     }
 
     // MARK: - Playback
@@ -446,25 +436,10 @@ final class AudioEngine: @unchecked Sendable {
         let frameLength = Int(buffer.frameLength)
         var int16Data = [Int16](repeating: 0, count: frameLength)
 
-        var maxSample: Float = 0.0
         for i in 0..<frameLength {
             let sample = floatData[0][i]
             let clipped = max(-1.0, min(1.0, sample))
             int16Data[i] = Int16(clipped * Float(Int16.max))
-            maxSample = max(maxSample, abs(sample))
-        }
-
-        // Log audio level periodically
-        struct LevelLogger {
-            nonisolated(unsafe) static var callCount = 0
-            nonisolated(unsafe) static var lastLogTime = Date.distantPast
-        }
-        LevelLogger.callCount += 1
-        let now = Date()
-        if now.timeIntervalSince(LevelLogger.lastLogTime) > 2.0 {
-            LevelLogger.lastLogTime = now
-            let dbLevel = maxSample > 0 ? 20 * log10(maxSample) : -100
-            NSLog("[AudioEngine] 📊 Audio level: %.1f dB (max sample: %.4f)", dbLevel, maxSample)
         }
 
         return Data(bytes: int16Data, count: frameLength * 2)

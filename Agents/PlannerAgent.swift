@@ -54,6 +54,8 @@ actor PlannerAgent {
     func generatePlan(topic: String, context: String, targetMinutes: Int) async throws -> PlannerResponse {
         lastActivityTime = Date()
 
+        AgentLogger.plannerStarted(topic: topic, duration: targetMinutes)
+
         let userPrompt = """
         Topic: \(topic)
         Context: \(context.isEmpty ? "None provided" : context)
@@ -71,10 +73,16 @@ actor PlannerAgent {
 
         guard let content = response.choices.first?.message.content,
               let data = content.data(using: .utf8) else {
+            AgentLogger.error(agent: "Planner", message: "Invalid response from API")
             throw OpenAIError.invalidResponse
         }
 
-        return try JSONDecoder().decode(PlannerResponse.self, from: data)
+        let plan = try JSONDecoder().decode(PlannerResponse.self, from: data)
+        let totalQuestions = plan.sections.reduce(0) { $0 + $1.questions.count }
+
+        AgentLogger.plannerComplete(sections: plan.sections.count, questions: totalQuestions, angle: plan.angle)
+
+        return plan
     }
 
     /// Activity score for UI meters (0-1 based on recency)

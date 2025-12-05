@@ -500,15 +500,6 @@ actor RealtimeClient {
             throw RealtimeClientError.invalidResponse
         }
 
-        // Log what we're sending (except audio data which is large)
-        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let type = json["type"] as? String {
-            if type != "input_audio_buffer.append" {
-                NSLog("[RealtimeClient] 📤 Sending: %@", type)
-                NSLog("[RealtimeClient]    Payload: %@", String(jsonString.prefix(500)))
-            }
-        }
-
         // IMPORTANT: Send as TEXT frame, not binary - OpenAI Realtime API requires text frames for JSON
         let message = URLSessionWebSocketTask.Message.string(jsonString)
         try await webSocket.send(message)
@@ -559,11 +550,6 @@ actor RealtimeClient {
             return
         }
 
-        // Log all received events (except high-frequency audio)
-        if !typeString.contains("audio.delta") {
-            NSLog("[RealtimeClient] 📥 Received: %@", typeString)
-        }
-
         switch typeString {
         case "error":
             if let event = try? decoder.decode(ErrorEvent.self, from: data) {
@@ -604,19 +590,12 @@ actor RealtimeClient {
 
         case "response.audio_transcript.delta":
             if let event = try? decoder.decode(TranscriptDeltaEvent.self, from: data) {
-                NSLog("[RealtimeClient] 📝 Transcript delta: '%@'", event.delta)
                 await delegate?.realtimeClient(self, didReceiveTranscript: event.delta, isFinal: false, speaker: "assistant")
-            } else {
-                NSLog("[RealtimeClient] ⚠️ Failed to decode transcript delta")
             }
 
         case "response.audio_transcript.done":
             if let event = try? decoder.decode(TranscriptDoneEvent.self, from: data) {
-                NSLog("[RealtimeClient] ✅ Transcript done: '%@'", String(event.transcript.prefix(100)))
-                // Send the complete transcript with isFinal=true
                 await delegate?.realtimeClient(self, didReceiveTranscript: event.transcript, isFinal: true, speaker: "assistant")
-            } else {
-                NSLog("[RealtimeClient] ⚠️ Failed to decode transcript done")
             }
 
         case "conversation.item.input_audio_transcription.completed":

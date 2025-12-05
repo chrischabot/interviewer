@@ -35,6 +35,11 @@ final class AppState {
     var isLoading = false
     var loadingMessage: String?
 
+    // MARK: - Analysis/Draft State (for passing between views)
+
+    var selectedDraftStyle: DraftStyle = .standard
+    var currentAnalysis: AnalysisSummary?
+
     private init() {
         Task {
             await checkAPIKey()

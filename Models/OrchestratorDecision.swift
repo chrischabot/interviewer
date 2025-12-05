@@ -6,6 +6,12 @@ struct OrchestratorDecision: Codable, Equatable {
     let phase: String  // "opening" | "deep_dive" | "wrap_up"
     let nextQuestion: NextQuestion
     let interviewerBrief: String
+
+    enum CodingKeys: String, CodingKey {
+        case phase
+        case nextQuestion = "next_question"
+        case interviewerBrief = "interviewer_brief"
+    }
 }
 
 struct NextQuestion: Codable, Equatable {
@@ -13,6 +19,13 @@ struct NextQuestion: Codable, Equatable {
     let targetSectionId: String
     let source: String  // "plan" | "gap" | "contradiction" | "research"
     let expectedAnswerSeconds: Int
+
+    enum CodingKeys: String, CodingKey {
+        case text
+        case targetSectionId = "target_section_id"
+        case source
+        case expectedAnswerSeconds = "expected_answer_seconds"
+    }
 
     init(
         text: String,
