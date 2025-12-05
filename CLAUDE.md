@@ -12,7 +12,9 @@ A **fully native Swift app** (macOS 26 Tahoe + iOS 26) that interviews users pod
 
 ## Tone of Voice
 
-When writing prose for this project—README, user-facing copy, essay output—channel the style of an **eloquent old-style journalist**: witty, succinct, to the point, and colorfully descriptive.
+### Project Documentation & Copy
+
+When writing prose for this project—README, CLAUDE.md, user-facing copy, marketing—channel the style of an **eloquent old-style journalist**: witty, succinct, to the point, and colorfully descriptive.
 
 **Characteristics:**
 - **Narrative over bullet points** when explaining concepts
@@ -23,6 +25,24 @@ When writing prose for this project—README, user-facing copy, essay output—c
 - **Avoid jargon** when plain language serves; use technical terms only when precision demands
 
 The goal: prose that sounds like it was written by someone who genuinely cares about ideas and has thought carefully about how to express them.
+
+### Generated Essays (Writer Agent Output)
+
+The essays produced by the Writer agent are different. They must capture **the interviewee's voice**, not ours.
+
+**Approach:**
+- Extract the speaker's natural patterns, cadence, and word choices from their transcript
+- Mirror their vocabulary—if they say "gnarly problem" don't write "complex challenge"
+- Preserve their sentence rhythms and the way they build arguments
+- Keep their characteristic phrases and verbal tics that make them *them*
+
+**The output should be:**
+- Well-written and elegantly formatted
+- Eloquent and flowing
+- Structured with clear narrative arc
+- But unmistakably in *their* voice, not a generic polished style
+
+The goal: an essay the interviewee reads and thinks "Yes, that's exactly what I meant—and exactly how I would have said it if I'd had time to write it properly."
 
 ---
 
