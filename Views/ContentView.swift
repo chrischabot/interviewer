@@ -364,8 +364,12 @@ struct HomeView: View {
                 ForEach(recentPlans.prefix(5)) { plan in
                     RecentConversationRow(
                         plan: plan,
+                        hasCompletedSession: hasCompletedSession(for: plan),
                         onResume: {
                             startFollowUp(for: plan)
+                        },
+                        onAnalysis: {
+                            goToAnalysis(for: plan)
                         },
                         onFresh: {
                             appState.navigate(to: .planning(planId: plan.id))
@@ -377,6 +381,21 @@ struct HomeView: View {
         }
         .padding(.horizontal, 32)
         .padding(.bottom, 32)
+    }
+
+    private func hasCompletedSession(for plan: Plan) -> Bool {
+        let planId = plan.id
+        let descriptor = FetchDescriptor<InterviewSession>(
+            predicate: #Predicate { session in
+                session.plan?.id == planId && session.endedAt != nil
+            }
+        )
+        do {
+            let sessions = try modelContext.fetch(descriptor)
+            return !sessions.isEmpty
+        } catch {
+            return false
+        }
     }
 
     private func startFollowUp(for plan: Plan) {
@@ -399,8 +418,28 @@ struct HomeView: View {
                 appState.navigate(to: .planning(planId: plan.id))
             }
         } catch {
-            NSLog("[HomeView] ⚠️ Failed to fetch sessions: %@", error.localizedDescription)
+            StructuredLogger.log(component: "HomeView", message: "Failed to fetch sessions: \(error.localizedDescription)")
             appState.navigate(to: .planning(planId: plan.id))
+        }
+    }
+
+    private func goToAnalysis(for plan: Plan) {
+        // Find the most recent completed session for this plan and go to analysis
+        let planId = plan.id
+        let descriptor = FetchDescriptor<InterviewSession>(
+            predicate: #Predicate { session in
+                session.plan?.id == planId && session.endedAt != nil
+            },
+            sortBy: [SortDescriptor(\.endedAt, order: .reverse)]
+        )
+
+        do {
+            let sessions = try modelContext.fetch(descriptor)
+            if let lastSession = sessions.first {
+                appState.navigate(to: .analysis(sessionId: lastSession.id))
+            }
+        } catch {
+            StructuredLogger.log(component: "HomeView", message: "Failed to fetch sessions for analysis: \(error.localizedDescription)")
         }
     }
 
@@ -446,7 +485,7 @@ struct HomeView: View {
                     do {
                         try modelContext.save()
                     } catch {
-                        NSLog("[HomeView] ⚠️ Failed to save plan: %@", error.localizedDescription)
+                        StructuredLogger.log(component: "HomeView", message: "Failed to save plan: \(error.localizedDescription)")
                     }
 
                     // Navigate to plan editor
@@ -704,7 +743,7 @@ struct PlanEditorView: View {
         do {
             try modelContext.save()
         } catch {
-            NSLog("[PlanEditorView] ⚠️ Failed to delete plan: %@", error.localizedDescription)
+            StructuredLogger.log(component: "PlanEditorView", message: "Failed to delete plan: \(error.localizedDescription)")
         }
         appState.navigateBack()
     }
@@ -1062,7 +1101,7 @@ struct InterviewView: View {
             session.utterances.append(utterance)
         }
 
-        // Save notes state
+        // Save notes state (including sectionCoverage and quotableLines for analysis)
         let notesModel = NotesStateModel()
         notesModel.keyIdeas = sessionManager.currentNotes.keyIdeas
         notesModel.stories = sessionManager.currentNotes.stories
@@ -1070,6 +1109,8 @@ struct InterviewView: View {
         notesModel.gaps = sessionManager.currentNotes.gaps
         notesModel.contradictions = sessionManager.currentNotes.contradictions
         notesModel.possibleTitles = sessionManager.currentNotes.possibleTitles
+        notesModel.sectionCoverage = sessionManager.currentNotes.sectionCoverage
+        notesModel.quotableLines = sessionManager.currentNotes.quotableLines
         session.notesState = notesModel
 
         await MainActor.run {
@@ -1077,7 +1118,7 @@ struct InterviewView: View {
             do {
                 try modelContext.save()
             } catch {
-                NSLog("[InterviewView] ⚠️ Failed to save session: %@", error.localizedDescription)
+                StructuredLogger.log(component: "InterviewView", message: "Failed to save session: \(error.localizedDescription)")
             }
             savedSessionId = session.id
         }
@@ -1310,7 +1351,7 @@ struct InterviewView: View {
             session.utterances.append(utterance)
         }
 
-        // Save notes state
+        // Save notes state (including sectionCoverage and quotableLines for analysis)
         let notesModel = NotesStateModel()
         notesModel.keyIdeas = sessionManager.currentNotes.keyIdeas
         notesModel.stories = sessionManager.currentNotes.stories
@@ -1318,6 +1359,8 @@ struct InterviewView: View {
         notesModel.gaps = sessionManager.currentNotes.gaps
         notesModel.contradictions = sessionManager.currentNotes.contradictions
         notesModel.possibleTitles = sessionManager.currentNotes.possibleTitles
+        notesModel.sectionCoverage = sessionManager.currentNotes.sectionCoverage
+        notesModel.quotableLines = sessionManager.currentNotes.quotableLines
         session.notesState = notesModel
 
         await MainActor.run {
@@ -1325,7 +1368,7 @@ struct InterviewView: View {
             do {
                 try modelContext.save()
             } catch {
-                NSLog("[InterviewView] ⚠️ Failed to save session: %@", error.localizedDescription)
+                StructuredLogger.log(component: "InterviewView", message: "Failed to save session: \(error.localizedDescription)")
             }
             savedSessionId = session.id
 
@@ -1425,7 +1468,9 @@ struct CircularProgressView: View {
 
 struct RecentConversationRow: View {
     let plan: Plan
+    let hasCompletedSession: Bool
     let onResume: () -> Void
+    let onDraft: () -> Void
     let onFresh: () -> Void
 
     var body: some View {
@@ -1436,17 +1481,33 @@ struct RecentConversationRow: View {
 
             Spacer()
 
-            // Edit/follow-up button - continue the conversation
+            // Follow-up button - continue the conversation
             Button {
                 onResume()
             } label: {
-                Image(systemName: "doc.text")
+                Image(systemName: "arrow.clockwise")
                     .font(.title3)
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Continue conversation")
             .accessibilityHint("Pick up where you left off with follow-up questions")
+            .disabled(!hasCompletedSession)
+            .opacity(hasCompletedSession ? 1.0 : 0.3)
+
+            // Draft button - jump to draft view (debug)
+            Button {
+                onDraft()
+            } label: {
+                Image(systemName: "doc.richtext")
+                    .font(.title3)
+                    .foregroundStyle(.blue)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("View draft")
+            .accessibilityHint("Jump directly to the draft screen for this conversation")
+            .disabled(!hasCompletedSession)
+            .opacity(hasCompletedSession ? 1.0 : 0.3)
 
             // New conversation button - view/edit the plan and start fresh
             Button {

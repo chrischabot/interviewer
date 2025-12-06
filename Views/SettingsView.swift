@@ -3,12 +3,11 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(AppState.self) private var appState
 
-    @State private var apiKey = ""
-    @State private var isValidating = false
-    @State private var showAPIKey = false
-    @State private var showDeleteConfirmation = false
-    @State private var hasExistingKey = false
-    @State private var isEditingKey = false
+    @State private var openAIKey = ""
+    @State private var anthropicKey = ""
+    @State private var showOpenAIKey = false
+    @State private var showAnthropicKey = false
+    @State private var validatingProvider: LLMProvider?
 
     private var audioDeviceManager: AudioDeviceManager { AudioDeviceManager.shared }
 
@@ -18,167 +17,11 @@ struct SettingsView: View {
                 // Audio Devices Section
                 audioDevicesSection
 
-                // API Configuration Section
-                GroupBox("API Configuration") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("OpenAI API Key")
-                            .font(.headline)
-
-                        Text("Enter your OpenAI API key to use the app. Your key is stored securely in the system Keychain and never leaves your device.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-
-                        if hasExistingKey && !isEditingKey {
-                            // Show masked display with edit button
-                            HStack {
-                                Text("sk-•••••••••••••••••••")
-                                    .font(.system(.body, design: .monospaced))
-                                    .foregroundStyle(.secondary)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(8)
-                                    .background(Color.primary.opacity(0.05))
-                                    .cornerRadius(6)
-                                    .accessibilityLabel("API key")
-                                    .accessibilityValue("Hidden. Key is saved securely.")
-
-                                Button("Change") {
-                                    isEditingKey = true
-                                    apiKey = ""
-                                }
-                                .buttonStyle(.bordered)
-                                .accessibilityLabel("Change API key")
-                                .accessibilityHint("Double tap to enter a new API key")
-                            }
-                        } else {
-                            // Editable field for new/changed key
-                            HStack {
-                                if showAPIKey {
-                                    TextField("sk-...", text: $apiKey)
-                                        .textFieldStyle(.roundedBorder)
-                                        .font(.system(.body, design: .monospaced))
-                                } else {
-                                    SecureField("sk-...", text: $apiKey)
-                                        .textFieldStyle(.roundedBorder)
-                                        .font(.system(.body, design: .monospaced))
-                                }
-
-                                Button {
-                                    showAPIKey.toggle()
-                                } label: {
-                                    Image(systemName: showAPIKey ? "eye.slash" : "eye")
-                                }
-                                .buttonStyle(.borderless)
-                                .accessibilityLabel(showAPIKey ? "Hide API key" : "Show API key")
-                                .accessibilityHint("Double tap to toggle visibility")
-
-                                if isEditingKey {
-                                    Button("Cancel") {
-                                        isEditingKey = false
-                                        apiKey = ""
-                                    }
-                                    .buttonStyle(.borderless)
-                                }
-                            }
-                        }
-
-                        if let error = appState.apiKeyError {
-                            Text(error)
-                                .font(.caption)
-                                .foregroundStyle(.red)
-                        }
-
-                        if !hasExistingKey || isEditingKey {
-                            HStack {
-                                Button("Save API Key") {
-                                    Task {
-                                        await saveAPIKey()
-                                    }
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .disabled(apiKey.isEmpty || isValidating)
-
-                                if isValidating {
-                                    ProgressView()
-                                        .scaleEffect(0.8)
-                                }
-
-                                Spacer()
-                            }
-                        }
-
-                        if hasExistingKey && !isEditingKey {
-                            HStack {
-                                Spacer()
-
-                                Button("Delete Key", role: .destructive) {
-                                    showDeleteConfirmation = true
-                                }
-                                .buttonStyle(.bordered)
-                            }
-                        }
-                    }
-                    .padding(.vertical, 8)
-                }
-
-                // Status Section
-                GroupBox("Status") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        if appState.hasAPIKey {
-                            Label("API key configured", systemImage: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
-                        } else {
-                            Label("No API key configured", systemImage: "exclamationmark.circle.fill")
-                                .foregroundStyle(.orange)
-                        }
-
-                        Link("Get an API key from OpenAI", destination: URL(string: "https://platform.openai.com/api-keys")!)
-                            .font(.caption)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 4)
-                }
-
-                // About Section
-                GroupBox("About") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        LabeledContent("App Version", value: "1.0.0")
-                        LabeledContent("Build", value: "1")
-
-                        Link(destination: URL(string: "https://platform.openai.com/docs")!) {
-                            Label("OpenAI Documentation", systemImage: "book")
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 4)
-                }
-
-                // Privacy Section
-                GroupBox("Privacy") {
-                    VStack(alignment: .leading, spacing: 16) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Label("Data stored locally", systemImage: "internaldrive")
-                            Text("All interview data, transcripts, and drafts are stored only on your device using SwiftData.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Label("API key in Keychain", systemImage: "key")
-                            Text("Your OpenAI API key is stored securely in the system Keychain with device-only access.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Label("OpenAI API calls", systemImage: "network")
-                            Text("Voice and text data is sent to OpenAI for processing. Review OpenAI's privacy policy for details.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 4)
-                }
+                apiConfigurationSection
+                providerSection
+                statusSection
+                aboutSection
+                privacySection
             }
             .padding()
         }
@@ -187,21 +30,7 @@ struct SettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .onAppear {
-            loadExistingKey()
-        }
-        .confirmationDialog(
-            "Delete API Key?",
-            isPresented: $showDeleteConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Delete", role: .destructive) {
-                Task {
-                    await deleteAPIKey()
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This will remove your API key from the Keychain. You'll need to enter it again to use the app.")
+            loadKeys()
         }
     }
 
@@ -262,69 +91,247 @@ struct SettingsView: View {
                         #endif
                     }
                 }
+            }
+            .padding(.vertical, 8)
+        }
+    }
 
-                // Refresh button
-                HStack {
-                    Spacer()
-                    Button {
-                        audioDeviceManager.refreshDevices()
-                    } label: {
-                        Label("Refresh Devices", systemImage: "arrow.clockwise")
+    // MARK: - API Configuration
+
+    @ViewBuilder
+    private var apiConfigurationSection: some View {
+        GroupBox("API Configuration") {
+            VStack(alignment: .leading, spacing: 12) {
+                providerKeyField(
+                    title: "OpenAI API Key",
+                    helper: "Stored securely in Keychain. Used for all agents when OpenAI is selected.",
+                    text: $openAIKey,
+                    isSecure: !showOpenAIKey,
+                    toggleSecure: { showOpenAIKey.toggle() },
+                    provider: .openAI,
+                    isValid: appState.openAIValid,
+                    errorText: appState.openAIError,
+                    validateAction: { Task { await saveKey(for: .openAI) } },
+                    deleteAction: { Task { await deleteKey(for: .openAI) } }
+                )
+
+                providerKeyField(
+                    title: "Anthropic API Key",
+                    helper: "Stored securely in Keychain. Used for all agents when Anthropic is selected.",
+                    text: $anthropicKey,
+                    isSecure: !showAnthropicKey,
+                    toggleSecure: { showAnthropicKey.toggle() },
+                    provider: .anthropic,
+                    isValid: appState.anthropicValid,
+                    errorText: appState.anthropicError,
+                    validateAction: { Task { await saveKey(for: .anthropic) } },
+                    deleteAction: { Task { await deleteKey(for: .anthropic) } }
+                )
+            }
+            .padding(.vertical, 8)
+        }
+    }
+
+    @ViewBuilder
+    private func providerKeyField(
+        title: String,
+        helper: String,
+        text: Binding<String>,
+        isSecure: Bool,
+        toggleSecure: @escaping () -> Void,
+        provider: LLMProvider,
+        isValid: Bool,
+        errorText: String?,
+        validateAction: @escaping () -> Void,
+        deleteAction: @escaping () -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.headline)
+            Text(helper).font(.caption).foregroundStyle(.secondary)
+
+            HStack {
+                if isSecure {
+                    SecureField("sk-...", text: text)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.body, design: .monospaced))
+                } else {
+                    TextField("sk-...", text: text)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.body, design: .monospaced))
+                }
+
+                Button {
+                    toggleSecure()
+                } label: {
+                    Image(systemName: isSecure ? "eye" : "eye.slash")
+                }
+                .buttonStyle(.borderless)
+            }
+
+            if let errorText, !(errorText.isEmpty) {
+                Text(errorText)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            HStack(spacing: 12) {
+                Button("Save & Validate") { validateAction() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(text.wrappedValue.isEmpty || validatingProvider != nil)
+
+                if validatingProvider == provider {
+                    ProgressView().scaleEffect(0.8)
+                }
+
+                Spacer()
+
+                if isValid {
+                    Button("Delete", role: .destructive) { deleteAction() }
+                        .buttonStyle(.bordered)
+                }
+            }
+
+            if isValid {
+                Label("Key validated", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .font(.caption)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    // MARK: - Provider selection + models
+
+    @ViewBuilder
+    private var providerSection: some View {
+        GroupBox("Provider") {
+            VStack(alignment: .leading, spacing: 12) {
+                if appState.openAIValid && appState.anthropicValid {
+                    Picker("Provider", selection: Binding(
+                        get: { appState.selectedProvider ?? .openAI },
+                        set: { provider in Task { await appState.selectProvider(provider) } }
+                    )) {
+                        Text("OpenAI (gpt-5.1)").tag(LLMProvider.openAI)
+                        Text("Anthropic (4.5)").tag(LLMProvider.anthropic)
                     }
-                    .buttonStyle(.borderless)
+                    .pickerStyle(.menu)
+                } else if appState.openAIValid {
+                    Label("Using OpenAI (gpt-5.1)", systemImage: "checkmark.circle")
+                } else if appState.anthropicValid {
+                    Label("Using Anthropic (4.5)", systemImage: "checkmark.circle")
+                } else {
+                    Label("No provider ready", systemImage: "exclamationmark.circle")
+                        .foregroundStyle(.orange)
+                }
+
+                if let provider = appState.selectedProvider {
+                    let config = LLMModelResolver.config(for: provider)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Model mapping")
+                            .font(.subheadline)
+                            .bold()
+                        LabeledContent("Insight agents", value: "\(config.insightModel)")
+                        LabeledContent("Speed agents", value: "\(config.speedModel)")
+                    }
                 }
             }
             .padding(.vertical, 8)
         }
     }
 
-    // MARK: - Actions
+    // MARK: - Status
 
-    private func loadExistingKey() {
-        Task {
-            let keyExists = await appState.getAPIKey() != nil
-            await MainActor.run {
-                hasExistingKey = keyExists
-                isEditingKey = false
-                apiKey = ""
+    @ViewBuilder
+    private var statusSection: some View {
+        GroupBox("Status") {
+            VStack(alignment: .leading, spacing: 8) {
+                if appState.hasAPIKey, let provider = appState.selectedProvider {
+                    Label("Ready with \(provider == .openAI ? "OpenAI" : "Anthropic")", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                } else {
+                    Label("No valid provider configured", systemImage: "exclamationmark.circle.fill")
+                        .foregroundStyle(.orange)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 4)
         }
     }
 
-    private func saveAPIKey() async {
-        guard !apiKey.isEmpty else { return }
+    // MARK: - About
 
-        await MainActor.run {
-            isValidating = true
-        }
+    @ViewBuilder
+    private var aboutSection: some View {
+        GroupBox("About") {
+            VStack(alignment: .leading, spacing: 12) {
+                LabeledContent("App Version", value: "1.0.0")
+                LabeledContent("Build", value: "1")
 
-        do {
-            try await appState.saveAPIKey(apiKey)
-            await MainActor.run {
-                apiKey = ""
-                hasExistingKey = true
-                isEditingKey = false
+                Link(destination: URL(string: "https://platform.openai.com/docs")!) {
+                    Label("OpenAI Documentation", systemImage: "book")
+                }
+                Link(destination: URL(string: "https://docs.anthropic.com/claude")!) {
+                    Label("Anthropic Documentation", systemImage: "book")
+                }
             }
-        } catch {
-            // Error is handled by appState
-        }
-
-        await MainActor.run {
-            isValidating = false
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 4)
         }
     }
 
-    private func deleteAPIKey() async {
-        do {
-            try await appState.deleteAPIKey()
-            await MainActor.run {
-                apiKey = ""
-                hasExistingKey = false
-                isEditingKey = false
+    // MARK: - Privacy
+
+    @ViewBuilder
+    private var privacySection: some View {
+        GroupBox("Privacy") {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Data stored locally", systemImage: "internaldrive")
+                    Text("All interview data, transcripts, and drafts are stored only on your device using SwiftData.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("API keys in Keychain", systemImage: "key")
+                    Text("Your provider API keys are stored securely in the system Keychain with device-only access.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Network calls", systemImage: "network")
+                    Text("Voice and text data are sent to the selected provider for processing.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
-        } catch {
-            // Handle error
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 4)
         }
+    }
+
+    // MARK: - Helpers
+
+    private func loadKeys() {
+        openAIKey = appState.openAIKeyCached ?? ""
+        anthropicKey = appState.anthropicKeyCached ?? ""
+    }
+
+    private func saveKey(for provider: LLMProvider) async {
+        validatingProvider = provider
+        switch provider {
+        case .openAI:
+            await appState.saveAPIKey(openAIKey, provider: .openAI)
+        case .anthropic:
+            await appState.saveAPIKey(anthropicKey, provider: .anthropic)
+        }
+        validatingProvider = nil
+    }
+
+    private func deleteKey(for provider: LLMProvider) async {
+        await appState.deleteAPIKey(provider: provider)
+        loadKeys()
     }
 }
 

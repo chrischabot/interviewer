@@ -12,19 +12,22 @@ struct LiveUpdateResult {
 actor AgentCoordinator {
     static let shared = AgentCoordinator()
 
-    private let openAIClient: OpenAIClient
+    private var llmClient: LLMClient
+    private var modelConfig: LLMModelConfig
+    private var provider: LLMProvider
 
     // Pre-interview agent
-    private let plannerAgent: PlannerAgent
+    private var plannerAgent: PlannerAgent
 
     // Live interview agents
-    private let noteTakerAgent: NoteTakerAgent
-    private let researcherAgent: ResearcherAgent
-    private let orchestratorAgent: OrchestratorAgent
+    private var noteTakerAgent: NoteTakerAgent
+    private var researcherAgent: ResearcherAgent
+    private var orchestratorAgent: OrchestratorAgent
 
     // Post-interview agents
-    private let analysisAgent: AnalysisAgent
-    private let writerAgent: WriterAgent
+    private var analysisAgent: AnalysisAgent
+    private var writerAgent: WriterAgent
+    private var followUpAgent: FollowUpAgent
 
     // Accumulated state during interview
     private var accumulatedResearch: [ResearchItem] = []
@@ -59,13 +62,30 @@ actor AgentCoordinator {
     private let maxTranscriptEntriesForOrchestrator = 30  // Orchestrator needs more for decisions
 
     private init() {
-        self.openAIClient = OpenAIClient.shared
-        self.plannerAgent = PlannerAgent(client: openAIClient)
-        self.noteTakerAgent = NoteTakerAgent(client: openAIClient)
-        self.researcherAgent = ResearcherAgent(client: openAIClient)
-        self.orchestratorAgent = OrchestratorAgent(client: openAIClient)
-        self.analysisAgent = AnalysisAgent(client: openAIClient)
-        self.writerAgent = WriterAgent(client: openAIClient)
+        self.provider = .openAI
+        self.modelConfig = LLMModelResolver.config(for: .openAI)
+        let adapter = OpenAIAdapter()
+        self.llmClient = adapter
+        self.plannerAgent = PlannerAgent(client: adapter, modelConfig: modelConfig)
+        self.noteTakerAgent = NoteTakerAgent(client: adapter, modelConfig: modelConfig)
+        self.researcherAgent = ResearcherAgent(client: adapter, modelConfig: modelConfig)
+        self.orchestratorAgent = OrchestratorAgent(client: adapter, modelConfig: modelConfig)
+        self.analysisAgent = AnalysisAgent(client: adapter, modelConfig: modelConfig)
+        self.writerAgent = WriterAgent(client: adapter, modelConfig: modelConfig)
+        self.followUpAgent = FollowUpAgent(client: adapter, modelConfig: modelConfig)
+    }
+
+    func updateLLM(client: LLMClient, modelConfig: LLMModelConfig, provider: LLMProvider) {
+        self.llmClient = client
+        self.modelConfig = modelConfig
+        self.provider = provider
+        self.plannerAgent = PlannerAgent(client: client, modelConfig: modelConfig)
+        self.noteTakerAgent = NoteTakerAgent(client: client, modelConfig: modelConfig)
+        self.researcherAgent = ResearcherAgent(client: client, modelConfig: modelConfig)
+        self.orchestratorAgent = OrchestratorAgent(client: client, modelConfig: modelConfig)
+        self.analysisAgent = AnalysisAgent(client: client, modelConfig: modelConfig)
+        self.writerAgent = WriterAgent(client: client, modelConfig: modelConfig)
+        self.followUpAgent = FollowUpAgent(client: client, modelConfig: modelConfig)
     }
 
     // MARK: - Session Management
@@ -167,6 +187,10 @@ actor AgentCoordinator {
     /// Store final notes when interview ends (for use in post-processing)
     func storeNotes(_ notes: NotesState) {
         finalNotes = notes
+    }
+
+    func analyzeFollowUp(session: SessionSnapshot, plan: PlanSnapshot) async throws -> FollowUpAnalysis {
+        try await followUpAgent.analyzeForFollowUp(session: session, plan: plan)
     }
 
     /// Get the final notes from the session
@@ -388,10 +412,11 @@ actor AgentCoordinator {
         }
 
         // Build interviewer instructions for Realtime API
+        // Use accumulated research (not just new items) to give interviewer full context
         let instructions = buildInterviewerInstructions(
             decision: decision,
             notes: updatedNotes,
-            research: newResearchItems
+            research: accumulatedResearch
         )
 
         AgentLogger.liveUpdateComplete(phase: decision.phase, nextQuestion: decision.nextQuestion.text)
@@ -582,9 +607,36 @@ actor AgentCoordinator {
         // Add relevant research if available
         let relevantResearch = research.filter { $0.priority <= 2 }
         if !relevantResearch.isEmpty {
-            instructions += "\n## Research Context\n"
-            for item in relevantResearch {
-                instructions += "- **\(item.topic)**: \(item.summary)\n"
+            // Separate claim verifications from regular research
+            let claimVerifications = relevantResearch.filter { $0.kind == "claim_verification" }
+            let regularResearch = relevantResearch.filter { $0.kind != "claim_verification" }
+
+            if !regularResearch.isEmpty {
+                instructions += "\n## Research Context\n"
+                for item in regularResearch {
+                    instructions += "- **\(item.topic)**: \(item.summary)\n"
+                }
+            }
+
+            // Surface claim verifications prominently, especially contradictions
+            if !claimVerifications.isEmpty {
+                instructions += "\n## Fact-Check Notes\n"
+                for item in claimVerifications {
+                    let status = item.verificationStatus ?? "unverifiable"
+                    let emoji = switch status {
+                    case "verified": "✅"
+                    case "contradicted": "⚠️"
+                    case "partially_true": "🟡"
+                    default: "❓"
+                    }
+                    instructions += "- \(emoji) **\(item.topic)**: \(status.uppercased())\n"
+                    if let note = item.verificationNote, !note.isEmpty {
+                        instructions += "  \(note)\n"
+                    }
+                    if status == "contradicted" || status == "partially_true" {
+                        instructions += "  → \(item.howToUseInQuestion)\n"
+                    }
+                }
             }
         }
 

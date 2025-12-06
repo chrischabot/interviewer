@@ -1,69 +1,60 @@
 import Foundation
-import os.log
 
-/// Human-readable logging for the agent system
-/// Shows the "conversation" between agents at a high level
+/// Human-readable logging for the agent system using the shared structured format.
 enum AgentLogger {
-
-    // MARK: - Simple Print
-
-    static func log(_ message: String) {
-        let time = formatTime()
-        print("[\(time)] \(message)")
-    }
 
     // MARK: - Coordinator Messages
 
     static func sessionStarted() {
-        log("🎬 Starting new interview session")
+        log(component: "Coordinator", "Starting new interview session")
     }
 
     static func liveUpdateStarted(progress: Int, transcriptCount: Int) {
-        log("🎛️ Processing update (\(progress)% through interview, \(transcriptCount) final exchanges)")
+        log(component: "Coordinator", "Processing update (\(progress)% through interview, \(transcriptCount) final exchanges)")
     }
 
     static func parallelAgentsStarted() {
-        log("   ↳ NoteTaker and Researcher working in parallel...")
+        log(component: "Coordinator", "NoteTaker and Researcher working in parallel...")
     }
 
     static func parallelAgentsFinished() {
-        log("   ↳ Both finished, asking Orchestrator what to do next")
+        log(component: "Coordinator", "Both finished, asking Orchestrator what to do next")
     }
 
     static func agentsSkipped(reason: String) {
-        log("⏭️ Agents skipped: \(reason)")
+        log(component: "Coordinator", "Agents skipped: \(reason)")
     }
 
     static func liveUpdateComplete(phase: String, nextQuestion: String) {
         let shortQuestion = String(nextQuestion.prefix(60))
-        log("✅ Update complete — now in \(phase) phase")
-        log("   ↳ Next: \"\(shortQuestion)...\"")
+        log(component: "Coordinator", "Update complete — now in \(phase) phase")
+        log(component: "Coordinator", "Next: \"\(shortQuestion)...\"")
     }
 
     static func contentChangeDetected(hasNewContent: Bool, hashChanged: Bool, countChanged: Bool) {
-        if hasNewContent {
-            var reasons: [String] = []
-            if hashChanged { reasons.append("content changed") }
-            if countChanged { reasons.append("new entries") }
-            log("📊 Content change: \(reasons.joined(separator: ", "))")
-        }
+        guard hasNewContent else { return }
+
+        var reasons: [String] = []
+        if hashChanged { reasons.append("content changed") }
+        if countChanged { reasons.append("new entries") }
+        log(component: "Coordinator", "Content change detected: \(reasons.joined(separator: ", "))")
     }
 
     // MARK: - Planner Messages
 
     static func plannerStarted(topic: String, duration: Int) {
-        log("📋 Planner designing interview for \"\(topic)\" (\(duration) min)")
+        log(component: "Planner Agent", "Designing interview for \"\(topic)\" (\(duration) min)")
     }
 
     static func plannerComplete(sections: Int, questions: Int, angle: String) {
-        log("📋 Planner done — \(sections) sections, \(questions) questions")
-        log("   ↳ Angle: \"\(angle)\"")
+        log(component: "Planner Agent", "Planner complete — \(sections) sections, \(questions) questions")
+        log(component: "Planner Agent", "Angle: \"\(angle)\"")
     }
 
     // MARK: - NoteTaker Messages
 
     static func noteTakerStarted(transcriptCount: Int) {
-        log("📝 NoteTaker reviewing \(transcriptCount) exchanges for insights...")
+        log(component: "NoteTaker Agent", "Reviewing \(transcriptCount) exchanges for insights...")
     }
 
     static func noteTakerFound(ideas: [String], stories: [String], claims: [String], gaps: [String]) {
@@ -86,55 +77,55 @@ enum AgentLogger {
         }
 
         if parts.isEmpty {
-            log("📝 NoteTaker found nothing new this round")
+            log(component: "NoteTaker Agent", "Found nothing new this round")
         } else {
-            log("📝 NoteTaker found: \(parts.joined(separator: ", "))")
+            log(component: "NoteTaker Agent", "Found: \(parts.joined(separator: ", "))")
         }
     }
 
     // MARK: - Researcher Messages
 
     static func researcherStarted() {
-        log("🔍 Researcher scanning for concepts to look up...")
+        log(component: "Researcher Agent", "Scanning for concepts to look up...")
     }
 
     static func researcherSkipped(reason: String) {
-        log("🔍 Researcher skipped: \(reason)")
+        log(component: "Researcher Agent", "Skipped: \(reason)")
     }
 
     static func researcherIdentifiedTopics(_ topics: [String]) {
         if topics.isEmpty {
-            log("🔍 Researcher: nothing new to look up")
+            log(component: "Researcher Agent", "Nothing new to look up")
         } else {
-            log("🔍 Researcher wants to look up: \(topics.joined(separator: ", "))")
+            log(component: "Researcher Agent", "Wants to look up: \(topics.joined(separator: ", "))")
         }
     }
 
     static func researcherLookingUp(topic: String, reason: String) {
-        log("   ↳ Researching \"\(topic)\" (\(reason))")
+        log(component: "Researcher Agent", "Researching \"\(topic)\" (\(reason))")
     }
 
     static func researcherFound(topic: String, summary: String) {
         let shortSummary = String(summary.prefix(80))
-        log("   ↳ Found: \(shortSummary)...")
+        log(component: "Researcher Agent", "Found: \(shortSummary)...")
     }
 
     static func researcherError(topic: String, error: String) {
-        log("   ↳ ❌ Research failed for \"\(topic)\": \(error)")
+        log(component: "Researcher Agent", "Research failed for \"\(topic)\": \(error)")
     }
 
     static func researcherComplete(count: Int) {
         if count == 0 {
-            log("🔍 Researcher done — no new findings")
+            log(component: "Researcher Agent", "Done — no new findings")
         } else {
-            log("🔍 Researcher done — \(count) new piece\(count == 1 ? "" : "s") of context")
+            log(component: "Researcher Agent", "Done — \(count) new piece\(count == 1 ? "" : "s") of context")
         }
     }
 
     // MARK: - Orchestrator Messages
 
     static func orchestratorThinking(progress: Int, questionsAsked: Int) {
-        log("🎯 Orchestrator deciding next move (\(progress)% done, \(questionsAsked) questions asked)")
+        log(component: "Orchestrator Agent", "Deciding next move (\(progress)% done, \(questionsAsked) questions asked)")
     }
 
     static func orchestratorDecided(phase: String, source: String, question: String) {
@@ -149,61 +140,59 @@ enum AgentLogger {
         default: sourceDesc = source
         }
 
-        log("🎯 Orchestrator says: ask about \"\(shortQuestion)...\"")
-        log("   ↳ Phase: \(phase), Reason: \(sourceDesc)")
+        log(component: "Orchestrator Agent", "Ask about \"\(shortQuestion)...\"")
+        log(component: "Orchestrator Agent", "Phase: \(phase), Reason: \(sourceDesc)")
     }
 
     static func orchestratorBrief(brief: String) {
         let shortBrief = String(brief.prefix(100))
-        log("   ↳ Tip for interviewer: \(shortBrief)...")
+        log(component: "Orchestrator Agent", "Tip for interviewer: \(shortBrief)...")
     }
 
     // MARK: - Analysis Messages
 
     static func analysisStarted(wordCount: Int) {
-        log("🔬 Analyst reviewing full interview (~\(wordCount) words)...")
+        log(component: "Analysis Agent", "Reviewing full interview (~\(wordCount) words)...")
     }
 
     static func analysisComplete(claims: Int, themes: [String], quotes: Int, title: String) {
-        log("🔬 Analyst done!")
-        log("   ↳ Found \(claims) main claims, \(quotes) quotable lines")
-        log("   ↳ Themes: \(themes.joined(separator: ", "))")
-        log("   ↳ Suggested title: \"\(title)\"")
+        log(component: "Analysis Agent", "Analysis complete")
+        log(component: "Analysis Agent", "Found \(claims) main claims, \(quotes) quotable lines")
+        log(component: "Analysis Agent", "Themes: \(themes.joined(separator: ", "))")
+        log(component: "Analysis Agent", "Suggested title: \"\(title)\"")
     }
 
     // MARK: - Writer Messages
 
     static func writerStarted(style: String) {
-        log("✍️ Writer crafting essay (style: \(style))...")
+        log(component: "Writer Agent", "Crafting essay (style: \(style))...")
     }
 
     static func writerComplete(wordCount: Int, readingTime: Int) {
-        log("✍️ Writer done — \(wordCount) words, ~\(readingTime) min read")
+        log(component: "Writer Agent", "Complete — \(wordCount) words, ~\(readingTime) min read")
     }
 
     // MARK: - Error Messages
 
     static func error(agent: String, message: String) {
-        log("❌ \(agent) error: \(message)")
+        log(component: "\(agent) Agent", "Error: \(message)")
     }
 
     // MARK: - Info Messages
 
     static func info(agent: String, message: String) {
-        log("ℹ️ \(agent): \(message)")
+        log(component: agent, message)
     }
 
     // MARK: - Question Tracking
 
     static func questionMarkedAsked(questionId: String, method: String) {
-        log("✓ Question marked as asked (id: \(questionId.prefix(8))..., method: \(method))")
+        log(component: "Coordinator", "Question marked as asked (id: \(questionId.prefix(8))..., method: \(method))")
     }
 
     // MARK: - Helpers
 
-    private static func formatTime() -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        return formatter.string(from: Date())
+    private static func log(component: String, _ message: String) {
+        StructuredLogger.log(component: component, message: message)
     }
 }

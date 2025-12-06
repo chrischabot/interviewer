@@ -1,6 +1,6 @@
 # PLAN.md
 
-Comprehensive implementation plan for a **fully native Swift** macOS 26 "Tahoe" / iOS 26 app that interviews a user on a topic and produces a narrative blog-ready write-up, using **OpenAI for all speech and reasoning**.
+Comprehensive implementation plan for a **fully native Swift** macOS 26 "Tahoe" / iOS 26 app that interviews a user on a topic and produces a narrative blog-ready write-up, using **OpenAI for all speech and reasoning** (no web search tooling).
 
 ---
 
@@ -13,7 +13,7 @@ This document is intended as a **full specification** for an AI code agent (e.g.
 * **Fully native Swift app** - no backend server required
 * macOS 26 Tahoe + iOS/iPadOS 26 (universal app)
 * Swift 6+, SwiftUI, Liquid Glass design
-* Single source of AI capability: **OpenAI** (Realtime + Chat Completions APIs, structured outputs, web search tools)
+* Single source of AI capability: **OpenAI** (Realtime + Chat Completions APIs, structured outputs; no web search tools)
 * Voice-first UX: 14-minute default conversations via OpenAI Realtime (with built-in exploration time)
 * Multi-agent orchestration running **directly on-device** (Planner, Note-Taker, Researcher, Orchestrator, Analysis, Writer, Follow-Up)
 * **Follow-up sessions**: Resume previous conversations with 6-minute deep-dives on unexplored threads
@@ -92,7 +92,7 @@ A **voice-driven thinking partner** for subject-matter experts:
      * Coverage of each section,
      * Gaps & contradictions to follow up.
    * Researcher:
-     * When new concepts arise, does quick web-assisted research via OpenAI's web search tools.
+     * When new concepts arise, provides quick factual context and claim checks from model knowledge (no live web search).
    * Orchestrator:
      * Chooses next question based on plan, notes, research, and time.
 
@@ -153,7 +153,7 @@ A **voice-driven thinking partner** for subject-matter experts:
 ### 2.3 Constraints & choices
 
 * **AI stack:**
-  * Speech + reasoning: **OpenAI** only.
+  * Speech + reasoning: **OpenAI** only (Realtime + Chat Completions; no web search tools).
   * No other AI SDKs.
 
 * **Architecture:**
@@ -629,28 +629,7 @@ let response = try await openAIClient.chatCompletion(
 )
 ```
 
-### 5.3 Web Search for Research Agent
-
-Use OpenAI's built-in web search tool:
-
-```swift
-let tools: [Tool] = [
-    Tool(
-        type: "web_search",
-        webSearch: WebSearchConfig(
-            searchContextSize: "medium"
-        )
-    )
-]
-
-let response = try await openAIClient.chatCompletion(
-    messages: researchMessages,
-    model: "gpt-4o-search-preview",
-    tools: tools
-)
-```
-
-### 5.4 Realtime API (WebSocket)
+### 5.3 Realtime API (WebSocket)
 
 ```swift
 actor RealtimeClient {
@@ -1137,8 +1116,8 @@ Set as `session.instructions` for Realtime:
 > – A list of **new phrases or concepts** that seem important.
 >
 > For each high-importance concept:
-> – Use web search to look up definitions, context, or recent discussions.
-> – Produce **short, accurate summaries** (2–3 sentences each).
+> – Provide concise, factual context or claim checks from your knowledge (no live web search).
+> – Produce **short, accurate summaries** (2–3 sentences each); be explicit when uncertain.
 > – Suggest 1–2 **questions the interviewer could ask**.
 >
 > Prioritize clarity over breadth.
@@ -1472,19 +1451,60 @@ import AppKit
 
 ## 13. Testing Strategy
 
-* **Unit tests:**
-  * Data models (Plan, NotesState, OrchestratorDecision)
-  * JSON encoding/decoding
-  * Agent prompt construction
+The project includes a comprehensive test suite with **158 tests across 10 test suites**, verifying agent orchestration without requiring live API calls.
 
-* **Integration tests:**
-  * Mock OpenAI API responses
-  * Verify structured output parsing
-  * Test agent coordination
+### Test Suite Overview
 
-* **End-to-end tests:**
-  * Simulated interview flow
-  * Verify data persists correctly in SwiftData
+| Suite | Tests | Focus |
+|-------|-------|-------|
+| AgentCoordinator Integration | 18 | State management, question tracking, phase management |
+| End-to-End Orchestration | 18 | Full interview lifecycle, parallel execution, error handling |
+| FollowUp Data Flow | 18 | Session context, transcript merging, quote deduplication |
+| NoteTaker Merge | 17 | Jaccard similarity deduplication, accumulation |
+| NotesState | 7 | Helper methods, coverage tracking |
+| OrchestratorDecision | 7 | Phase enums, JSON roundtrip |
+| Phase Transition | 22 | Phase boundaries (15%/85%), callbacks, locking |
+| PlanSnapshot | 6 | Structure validation, serialization |
+| Property Completeness | 30 | All model properties, merge appends (not overwrites) |
+| ResearcherAgent | 15 | Topic tracking, deduplication, cooldown |
+
+### Test Architecture
+
+```
+Tests/
+├── Mocks/
+│   └── MockOpenAIClient.swift        # Deterministic responses by schema name
+├── AgentCoordinatorTests.swift
+├── NoteTakerMergeTests.swift
+├── ResearcherAgentTests.swift
+├── FollowUpDataFlowTests.swift
+├── PhaseTransitionTests.swift
+├── EndToEndOrchestrationTests.swift
+├── PropertyCompletenessTests.swift
+├── NotesStateTests.swift
+├── OrchestratorDecisionTests.swift
+└── PlanSnapshotTests.swift
+```
+
+### Key Test Patterns
+
+* **Mock Client**: `MockOpenAIClient` returns fixture data based on `responseFormat.schemaName`, enabling deterministic testing
+* **Jaccard Similarity**: Tests verify deduplication thresholds (0.7 for ideas, 0.6 for contradictions, 0.8 for quotes)
+* **Parallel Execution**: Tests confirm NoteTaker and Researcher run concurrently, with Orchestrator sequential after both
+* **Phase Locking**: Tests verify phase transitions only move forward and lock at wrap_up
+* **Merge Behavior**: Tests ensure `NotesState.merge` appends data rather than overwriting
+
+### Running Tests
+
+```bash
+# Run all agent tests
+xcodebuild test -scheme Interviewer -destination 'platform=macOS' \
+    -only-testing:InterviewerTests
+
+# Run specific suite
+xcodebuild test -scheme Interviewer -destination 'platform=macOS' \
+    -only-testing:InterviewerTests/PhaseTransitionTests
+```
 
 ---
 

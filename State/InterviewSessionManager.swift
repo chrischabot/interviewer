@@ -77,6 +77,7 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
     private var planSnapshot: PlanSnapshot?  // Cached snapshot for agent processing
     private var delegatesConfigured = false
     var hasDetectedClosing = false  // Track if we've seen a closing statement (public for UI)
+    private var previousSessionSummary: String?  // Summary of previous session for follow-ups
     private var closingDetectedAt: Date?  // When closing was detected
 
     // Phrases that indicate the interview is ending
@@ -101,6 +102,10 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
         audioEngine.delegate = self
     }
 
+    private nonisolated func log(_ message: String, component: String = "InterviewSession") {
+        StructuredLogger.log(component: component, message: message)
+    }
+
     private func ensureDelegatesConfigured() async {
         guard !delegatesConfigured else { return }
         await realtimeClient.setDelegate(self)
@@ -113,7 +118,7 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
         // Ensure delegates are configured before starting
         await ensureDelegatesConfigured()
 
-        NSLog("[InterviewSession] 🎬 Starting session for plan: %@", plan.topic)
+        log("Starting session for plan: \(plan.topic)")
 
         self.plan = plan
         self.targetSeconds = plan.targetSeconds
@@ -139,7 +144,7 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
 
         // Initialize agent coordinator - preserve context if this is a follow-up
         if plan.isFollowUp, let previousSession = previousSession {
-            NSLog("[InterviewSession] 📚 Loading context from previous session with %d utterances", previousSession.utterances.count)
+            log("Loading context from previous session with \(previousSession.utterances.count) utterances")
 
             // Convert utterances to transcript entries
             let previousTranscript = previousSession.utterances.map { utterance in
@@ -154,6 +159,12 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
             // Get previous notes
             let previousNotes = previousSession.notesState?.toNotesState() ?? .empty
 
+            // Build summary of what was covered for the Realtime agent
+            previousSessionSummary = buildPreviousSessionSummary(
+                notes: previousNotes,
+                plan: previousSession.plan
+            )
+
             // Get the original plan snapshot (if available)
             let previousPlanSnapshot = previousSession.plan?.toSnapshot() ?? plan.toSnapshot()
 
@@ -163,6 +174,7 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
                 previousPlan: previousPlanSnapshot
             )
         } else {
+            previousSessionSummary = nil
             await AgentCoordinator.shared.startNewSession()
         }
 
@@ -170,23 +182,23 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
 
         do {
             // Setup audio engine
-            NSLog("[InterviewSession] 🎤 Setting up audio engine...")
+            log("Setting up audio engine...")
             try audioEngine.setup()
-            NSLog("[InterviewSession] ✓ Audio engine setup complete")
+            log("Audio engine setup complete")
 
             // Build instructions from plan
             let instructions = buildInstructions(from: plan)
-            NSLog("[InterviewSession] 📝 Instructions built (length: %d)", instructions.count)
+            log("Instructions built (length: \(instructions.count))")
 
             // Connect to Realtime API
-            NSLog("[InterviewSession] 🔌 Connecting to Realtime API...")
+            log("Connecting to Realtime API...")
             try await realtimeClient.connect(instructions: instructions)
-            NSLog("[InterviewSession] ✓ Connected to Realtime API")
+            log("Connected to Realtime API")
 
             // Start audio capture
-            NSLog("[InterviewSession] 🎙️ Starting audio capture...")
+            log("Starting audio capture...")
             try await audioEngine.startCapturing()
-            NSLog("[InterviewSession] ✓ Audio capture started")
+            log("Audio capture started")
 
             // Start timer
             startTimer()
@@ -198,9 +210,9 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
             }
 
             state = .active
-            NSLog("[InterviewSession] ✅ Session is now active!")
+            log("Session is now active!")
         } catch {
-            NSLog("[InterviewSession] ❌ Error starting session: %@", String(describing: error))
+            log("Error starting session: \(String(describing: error))")
             // Clean up any partially started resources
             stopTimer()
             audioEngine.shutdown()
@@ -242,7 +254,7 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
     func triggerResponse() async {
         // Only commit and respond if we've actually sent audio
         guard hasSentAudioSinceLastResponse else {
-            NSLog("[InterviewSession] ⚠️ No audio sent since last response, skipping commit")
+            log("No audio sent since last response, skipping commit")
             return
         }
 
@@ -304,7 +316,7 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
         guard let snapshot = planSnapshot else { return }
 
         isProcessingAgents = true
-        NSLog("[InterviewSession] 🤖 Starting agent processing cycle...")
+        log("Starting agent processing cycle...")
 
         // Process live update - this never throws due to graceful fallbacks
         let result = await AgentCoordinator.shared.processLiveUpdate(
@@ -330,18 +342,52 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
         do {
             try await realtimeClient.updateInstructions(result.interviewerInstructions)
         } catch {
-            NSLog("[InterviewSession] ⚠️ Failed to update Realtime instructions: %@", error.localizedDescription)
+            log("Failed to update Realtime instructions: \(error.localizedDescription)")
             // Interview continues with existing instructions
         }
 
-        NSLog("[InterviewSession] ✅ Agent processing complete - Phase: %@, Next Q: %@",
-              result.decision.phase,
-              String(result.decision.nextQuestion.text.prefix(50)))
+        log("Agent processing complete - Phase: \(result.decision.phase), Next Q: \(String(result.decision.nextQuestion.text.prefix(50)))")
 
         isProcessingAgents = false
     }
 
     // MARK: - Instructions Builder
+
+    /// Build a summary of what was covered in the previous session for follow-up context
+    private func buildPreviousSessionSummary(notes: NotesState, plan: Plan?) -> String {
+        var parts: [String] = []
+
+        // Key ideas discussed
+        if !notes.keyIdeas.isEmpty {
+            let ideas = notes.keyIdeas.prefix(5).map { "• \($0.text)" }.joined(separator: "\n")
+            parts.append("**Key ideas discussed:**\n\(ideas)")
+        }
+
+        // Stories shared
+        if !notes.stories.isEmpty {
+            let stories = notes.stories.prefix(3).map { "• \($0.summary)" }.joined(separator: "\n")
+            parts.append("**Stories shared:**\n\(stories)")
+        }
+
+        // Main claims made
+        if !notes.claims.isEmpty {
+            let claims = notes.claims.prefix(4).map { "• \($0.text)" }.joined(separator: "\n")
+            parts.append("**Claims/opinions expressed:**\n\(claims)")
+        }
+
+        // Sections covered (from sectionCoverage)
+        if !notes.sectionCoverage.isEmpty {
+            let covered = notes.sectionCoverage
+                .filter { $0.coverageQuality != "none" }
+                .map { "\($0.sectionTitle) (\($0.coverageQuality))" }
+                .joined(separator: ", ")
+            if !covered.isEmpty {
+                parts.append("**Sections covered:** \(covered)")
+            }
+        }
+
+        return parts.isEmpty ? "" : parts.joined(separator: "\n\n")
+    }
 
     private func buildInstructions(from plan: Plan) -> String {
         var sectionsText = ""
@@ -359,18 +405,27 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
         // Build follow-up context if this is a continuation
         var followUpSection = ""
         if plan.isFollowUp && !plan.followUpContext.isEmpty {
+            // Include summary of what was previously covered so the agent knows what NOT to repeat
+            let previousSummary = previousSessionSummary ?? ""
+            let summarySection = previousSummary.isEmpty ? "" : """
+
+            **What was already covered (DO NOT REPEAT):**
+            \(previousSummary)
+
+            """
+
             followUpSection = """
 
             **IMPORTANT: This is a FOLLOW-UP conversation.**
 
             You already spoke with this person in a previous session. This is a continuation to explore new angles and add depth.
-
+            \(summarySection)
             **Topics to explore in this follow-up:**
             \(plan.followUpContext)
 
             **Follow-up style:**
             - Reference that you spoke before ("Last time we talked about...")
-            - Don't repeat ground already covered
+            - Don't repeat ground already covered - see summary above
             - Go deeper on new angles
             - Help them add richness to their eventual essay
 
@@ -492,7 +547,7 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
 
         // Clear the audio buffer when AI starts speaking to prevent stale audio from triggering responses
         if !wasAlreadySpeaking {
-            NSLog("[InterviewSession] 🔇 AI started speaking, clearing audio buffer")
+            log("AI started speaking, clearing audio buffer")
             try? await realtimeClient.clearAudioBuffer()
         }
 
@@ -510,7 +565,7 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
             if speaker == "assistant" {
                 if isFinal {
                     // Final transcript - mark the current entry as final
-                    NSLog("[Session] ✅ Final assistant transcript received, length: %d", text.count)
+                    log("Final assistant transcript received, length: \(text.count)", component: "Session")
 
                     // Update the current streaming entry to final, or create one if needed
                     if let index = self.transcript.lastIndex(where: { $0.speaker == "assistant" && !$0.isFinal }) {
@@ -546,7 +601,7 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
             } else if speaker == "user" {
                 // Capture user speech for agents and analysis
                 if isFinal {
-                    NSLog("[Session] 🎤 Final user transcript received, length: %d", text.count)
+                    log("Final user transcript received, length: \(text.count)", component: "Session")
 
                     // Update the current streaming entry to final, or create one if needed
                     if let index = self.transcript.lastIndex(where: { $0.speaker == "user" && !$0.isFinal }) {
@@ -639,7 +694,7 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
             // Only show error if session is still active (not ending/ended)
             let isStillActive = await MainActor.run { self.state == .active }
             if isStillActive {
-                NSLog("[AudioCapture] ❌ Failed to send audio: %@", error.localizedDescription)
+                log("Failed to send audio: \(error.localizedDescription)", component: "AudioCapture")
                 await MainActor.run {
                     self.errorMessage = error.localizedDescription
                 }
@@ -658,17 +713,17 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
     // MARK: - Closing Detection
 
     private func checkForClosingStatement(_ text: String) {
-        // Only check if we're in wrap_up phase or past target time
-        let shouldCheck = currentPhase == "wrap_up" || elapsedSeconds >= targetSeconds - 60
-
-        guard shouldCheck else { return }
+        // Always check for closing statements - respect user's intent to end at any time
+        // The AI is instructed not to use closing phrases prematurely, so if one appears,
+        // it's either from the user explicitly signaling they're done, or the AI
+        // correctly wrapping up (which we should honor regardless of phase/time)
         guard !hasDetectedClosing else { return }  // Already detected
 
         let lowerText = text.lowercased()
 
         for phrase in closingPhrases {
             if lowerText.contains(phrase) {
-                NSLog("[InterviewSession] 🏁 Detected closing phrase: \"%@\"", phrase)
+                log("Detected closing phrase: \"\(phrase)\"")
                 hasDetectedClosing = true
                 closingDetectedAt = Date()
 
@@ -683,8 +738,8 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
 
     /// Stop audio capture and realtime connection immediately (called when closing detected)
     private func stopAudioAndConnection() async {
-        NSLog("[InterviewSession] 🛑 Stopping audio and connection after closing")
-        NSLog("[InterviewSession] 📊 Transcript contains %d entries before stopping", transcript.count)
+        log("Stopping audio and connection after closing")
+        log("Transcript contains \(transcript.count) entries before stopping")
 
         // Stop all audio
         audioEngine.stopCapturing()
@@ -703,7 +758,7 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
         // CRITICAL: Set state to .ended so the UI shows the ended screen and data gets saved
         // This triggers the onChange handler in InterviewView that calls saveSessionAfterAutoEnd()
         state = .ended
-        NSLog("[InterviewSession] ✅ Session state set to .ended - ready for data save")
+        log("Session state set to .ended - ready for data save")
     }
 }
 

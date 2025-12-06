@@ -50,6 +50,10 @@ struct AnalysisView: View {
         sessions.first { $0.id == sessionId }
     }
 
+    private func log(_ message: String) {
+        StructuredLogger.log(component: "AnalysisView", message: message)
+    }
+
     var body: some View {
         Group {
             if let session {
@@ -393,21 +397,23 @@ struct AnalysisView: View {
                 if let previousTranscript = await fetchPreviousTranscript(sessionId: previousSessionId) {
                     // Combine: original first, then follow-up
                     transcript = previousTranscript + transcript
-                    NSLog("[AnalysisView] 📎 Combined transcripts: %d original + %d follow-up entries",
-                          previousTranscript.count, session.utterances.count)
+                    log("Combined transcripts: \(previousTranscript.count) original + \(session.utterances.count) follow-up entries")
                 }
             }
 
             // Get notes from coordinator, falling back to persisted notes from session
             var notes = await AgentCoordinator.shared.getFinalNotes()
             if notes == .empty, let persistedNotes = session.notesState {
+                // Include ALL fields - sectionCoverage and quotableLines are critical for analysis quality
                 notes = NotesState(
                     keyIdeas: persistedNotes.keyIdeas,
                     stories: persistedNotes.stories,
                     claims: persistedNotes.claims,
                     gaps: persistedNotes.gaps,
                     contradictions: persistedNotes.contradictions,
-                    possibleTitles: persistedNotes.possibleTitles
+                    possibleTitles: persistedNotes.possibleTitles,
+                    sectionCoverage: persistedNotes.sectionCoverage,
+                    quotableLines: persistedNotes.quotableLines
                 )
             }
 
@@ -433,7 +439,7 @@ struct AnalysisView: View {
                 do {
                     try modelContext.save()
                 } catch {
-                    NSLog("[AnalysisView] ⚠️ Failed to save analysis: %@", error.localizedDescription)
+                    log("Failed to save analysis: \(error.localizedDescription)")
                 }
 
                 analysis = newAnalysis
@@ -463,7 +469,7 @@ struct AnalysisView: View {
         do {
             let sessions = try modelContext.fetch(descriptor)
             guard let previousSession = sessions.first else {
-                NSLog("[AnalysisView] ⚠️ Previous session not found: %@", sessionId.uuidString)
+                log("Previous session not found: \(sessionId.uuidString)")
                 return nil
             }
 
@@ -478,7 +484,7 @@ struct AnalysisView: View {
                     )
                 }
         } catch {
-            NSLog("[AnalysisView] ⚠️ Failed to fetch previous session: %@", error.localizedDescription)
+            log("Failed to fetch previous session: \(error.localizedDescription)")
             return nil
         }
     }

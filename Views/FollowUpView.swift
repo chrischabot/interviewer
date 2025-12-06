@@ -230,16 +230,45 @@ struct FollowUpView: View {
                 NotesSnapshot(
                     keyIdeas: notes.keyIdeas.map { $0.text },
                     stories: notes.stories.map { $0.summary },
-                    gaps: notes.gaps.map { $0.description },
-                    contradictions: notes.contradictions.map { $0.description }
+                    claims: notes.claims.map { $0.text },
+                    gaps: notes.gaps.map { gap in
+                        GapSnapshot(
+                            description: gap.description,
+                            suggestedFollowup: gap.suggestedFollowup
+                        )
+                    },
+                    contradictions: notes.contradictions.map { contradiction in
+                        ContradictionSnapshot(
+                            description: contradiction.description,
+                            firstQuote: contradiction.firstQuote,
+                            secondQuote: contradiction.secondQuote,
+                            suggestedClarificationQuestion: contradiction.suggestedClarificationQuestion
+                        )
+                    },
+                    possibleTitles: notes.possibleTitles,
+                    sectionCoverage: notes.sectionCoverage.map { coverage in
+                        SectionCoverageSnapshot(
+                            sectionId: coverage.id,
+                            sectionTitle: coverage.sectionTitle,
+                            coverageQuality: coverage.coverageQuality,
+                            missingAspects: coverage.missingAspects
+                        )
+                    },
+                    quotableLines: notes.quotableLines.map { quote in
+                        QuotableLineSnapshot(
+                            text: quote.text,
+                            potentialUse: quote.potentialUse,
+                            topic: quote.topic,
+                            strength: quote.strength
+                        )
+                    }
                 )
             }
         )
         let planSnapshot = plan.toSnapshot()
 
         do {
-            let followUpAgent = FollowUpAgent()
-            let result = try await followUpAgent.analyzeForFollowUp(
+            let result = try await AgentCoordinator.shared.analyzeFollowUp(
                 session: sessionSnapshot,
                 plan: planSnapshot
             )
@@ -320,7 +349,7 @@ struct FollowUpView: View {
             do {
                 try modelContext.save()
             } catch {
-                NSLog("[FollowUpView] ⚠️ Failed to save follow-up plan: %@", error.localizedDescription)
+                StructuredLogger.log(component: "FollowUpView", message: "Failed to save follow-up plan: \(error.localizedDescription)")
             }
 
             isGeneratingPlan = false

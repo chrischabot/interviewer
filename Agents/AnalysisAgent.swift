@@ -57,11 +57,13 @@ struct AnalysisResponse: Codable {
 /// AnalysisAgent processes the complete interview transcript post-interview
 /// to extract claims, themes, tensions, and quotable lines
 actor AnalysisAgent {
-    private let client: OpenAIClient
+    private let llm: LLMClient
+    private var modelConfig: LLMModelConfig
     private var lastActivityTime: Date?
 
-    init(client: OpenAIClient = .shared) {
-        self.client = client
+    init(client: LLMClient, modelConfig: LLMModelConfig) {
+        self.llm = client
+        self.modelConfig = modelConfig
     }
 
     /// Analyze the complete interview transcript
@@ -120,23 +122,21 @@ actor AnalysisAgent {
         6. **Suggested Title & Subtitle**: A compelling essay title that captures the angle, plus a subtitle that adds context
         """
 
-        let response = try await client.chatCompletion(
+        let analysisResponse: AnalysisResponse = try await llm.chatStructured(
             messages: [
                 Message.system(Self.systemPrompt),
                 Message.user(userPrompt)
             ],
-            model: "gpt-4o",
-            responseFormat: .jsonSchema(name: "analysis_schema", schema: Self.jsonSchema)
+            model: modelConfig.insightModel,
+            schemaName: "analysis_schema",
+            schema: Self.jsonSchema,
+            maxTokens: nil
         )
+        var analysis = analysisResponse.toAnalysisSummary()
 
-        guard let content = response.choices.first?.message.content,
-              let data = content.data(using: .utf8) else {
-            AgentLogger.error(agent: "Analyst", message: "Invalid response from API")
-            throw OpenAIError.invalidResponse
-        }
-
-        let analysisResponse = try JSONDecoder().decode(AnalysisResponse.self, from: data)
-        let analysis = analysisResponse.toAnalysisSummary()
+        // Merge in exceptional quotes from live note-taking that the LLM might have missed
+        // Live-captured quotes have quality ratings - prioritize exceptional/great ones
+        analysis = mergeQuotableLines(analysis: analysis, notes: notes)
 
         AgentLogger.analysisComplete(
             claims: analysis.mainClaims.count,
@@ -153,6 +153,79 @@ actor AnalysisAgent {
         guard let lastActivity = lastActivityTime else { return 0.0 }
         let elapsed = Date().timeIntervalSince(lastActivity)
         return max(0, 1.0 - (elapsed / 30.0))
+    }
+
+    // MARK: - Quote Merging
+
+    /// Merge live-captured quotableLines into analysis quotes
+    /// This ensures exceptional quotes identified during the interview aren't lost
+    private func mergeQuotableLines(analysis: AnalysisSummary, notes: NotesState) -> AnalysisSummary {
+        // Get exceptional/great quotes from live note-taking
+        let liveQuotes = notes.quotableLines.filter {
+            $0.strength == "exceptional" || $0.strength == "great"
+        }
+
+        guard !liveQuotes.isEmpty else { return analysis }
+
+        // Build set of existing quote texts for deduplication (normalized)
+        let existingQuoteTexts = Set(analysis.quotes.map { normalizeQuote($0.text) })
+
+        // Find live quotes not already in analysis
+        var newQuotes: [Quote] = []
+        for liveQuote in liveQuotes {
+            let normalized = normalizeQuote(liveQuote.text)
+
+            // Check if this quote (or similar) already exists
+            let alreadyExists = existingQuoteTexts.contains { existing in
+                textSimilarity(normalized, existing) > 0.6
+            }
+
+            if !alreadyExists {
+                // Map potentialUse to a role
+                let role: String = switch liveQuote.potentialUse {
+                case "hook", "tweet": "opinion"
+                case "section_header": "turning_point"
+                case "conclusion": "opinion"
+                default: "opinion"
+                }
+                newQuotes.append(Quote(text: liveQuote.text, role: role))
+            }
+        }
+
+        // If we found new quotes, merge them in (exceptional ones at the front)
+        guard !newQuotes.isEmpty else { return analysis }
+
+        var mergedQuotes = analysis.quotes
+        // Insert exceptional quotes at the beginning
+        mergedQuotes.insert(contentsOf: newQuotes, at: 0)
+
+        return AnalysisSummary(
+            researchGoal: analysis.researchGoal,
+            mainClaims: analysis.mainClaims,
+            themes: analysis.themes,
+            tensions: analysis.tensions,
+            quotes: mergedQuotes,
+            suggestedTitle: analysis.suggestedTitle,
+            suggestedSubtitle: analysis.suggestedSubtitle
+        )
+    }
+
+    /// Normalize quote text for comparison
+    private func normalizeQuote(_ text: String) -> String {
+        text.lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\"", with: "")
+            .replacingOccurrences(of: "'", with: "")
+    }
+
+    /// Simple text similarity using word overlap
+    private func textSimilarity(_ text1: String, _ text2: String) -> Double {
+        let words1 = Set(text1.split(separator: " ").map(String.init))
+        let words2 = Set(text2.split(separator: " ").map(String.init))
+        guard !words1.isEmpty || !words2.isEmpty else { return 0.0 }
+        let intersection = words1.intersection(words2).count
+        let union = words1.union(words2).count
+        return Double(intersection) / Double(union)
     }
 
     // MARK: - System Prompt

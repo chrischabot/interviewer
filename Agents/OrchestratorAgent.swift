@@ -38,11 +38,13 @@ struct PlanSnapshot: Codable {
 
 /// OrchestratorAgent decides the next question based on plan, notes, research, and timing
 actor OrchestratorAgent {
-    private let client: OpenAIClient
+    private let llm: LLMClient
+    private var modelConfig: LLMModelConfig
     private var lastActivityTime: Date?
 
-    init(client: OpenAIClient = .shared) {
-        self.client = client
+    init(client: LLMClient, modelConfig: LLMModelConfig) {
+        self.llm = client
+        self.modelConfig = modelConfig
     }
 
     /// Decide the next question to ask
@@ -54,22 +56,16 @@ actor OrchestratorAgent {
 
         let userPrompt = buildUserPrompt(from: context)
 
-        let response = try await client.chatCompletion(
+        let decision: OrchestratorDecision = try await llm.chatStructured(
             messages: [
                 Message.system(Self.systemPrompt),
                 Message.user(userPrompt)
             ],
-            model: "gpt-4o",
-            responseFormat: .jsonSchema(name: "orchestrator_decision_schema", schema: Self.jsonSchema)
+            model: modelConfig.insightModel,
+            schemaName: "orchestrator_decision_schema",
+            schema: Self.jsonSchema,
+            maxTokens: nil
         )
-
-        guard let content = response.choices.first?.message.content,
-              let data = content.data(using: .utf8) else {
-            AgentLogger.error(agent: "Orchestrator", message: "Invalid response from API")
-            throw OpenAIError.invalidResponse
-        }
-
-        let decision = try JSONDecoder().decode(OrchestratorDecision.self, from: data)
 
         AgentLogger.orchestratorDecided(
             phase: decision.phase,
@@ -166,6 +162,27 @@ actor OrchestratorAgent {
                 notesSummary += "  First: \"\(contradiction.firstQuote)\"\n"
                 notesSummary += "  Second: \"\(contradiction.secondQuote)\"\n"
                 notesSummary += "  → Suggested: \(contradiction.suggestedClarificationQuestion)\n"
+            }
+            notesSummary += "\n"
+        }
+        // Add section coverage quality - critical for knowing which sections need more depth
+        if !context.notes.sectionCoverage.isEmpty {
+            notesSummary += "**Section Coverage Quality:**\n"
+            for coverage in context.notes.sectionCoverage {
+                let emoji = switch coverage.coverageQuality {
+                case "deep": "✅"
+                case "adequate": "🟢"
+                case "shallow": "🟡"
+                default: "⚪️"
+                }
+                notesSummary += "- \(emoji) \(coverage.sectionTitle): \(coverage.coverageQuality.uppercased())"
+                if !coverage.missingAspects.isEmpty {
+                    notesSummary += " (Missing: \(coverage.missingAspects.joined(separator: ", ")))"
+                }
+                if let followup = coverage.suggestedFollowup, !followup.isEmpty {
+                    notesSummary += "\n  → Suggested: \(followup)"
+                }
+                notesSummary += "\n"
             }
             notesSummary += "\n"
         }
@@ -359,4 +376,3 @@ extension Plan {
         )
     }
 }
-

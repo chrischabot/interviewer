@@ -342,24 +342,28 @@ actor RealtimeClient {
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
+    private func log(_ message: String) {
+        StructuredLogger.log(component: "RealtimeClient", message: message)
+    }
+
     init() {}
 
     // MARK: - Connection
 
     func connect(instructions: String, voice: String = "shimmer") async throws {
-        NSLog("[RealtimeClient] 🔌 Starting connection...")
+        log("Starting connection...")
 
         guard let apiKey = try? await KeychainManager.shared.retrieveAPIKey() else {
-            NSLog("[RealtimeClient] ❌ No API key found")
+            log("No API key found")
             throw RealtimeClientError.noAPIKey
         }
-        NSLog("[RealtimeClient] ✓ API key retrieved (length: %d)", apiKey.count)
+        log("API key retrieved (length: \(apiKey.count))")
 
         let model = "gpt-4o-realtime-preview"
         guard let url = URL(string: "wss://api.openai.com/v1/realtime?model=\(model)") else {
             throw RealtimeClientError.connectionFailed("Invalid URL")
         }
-        NSLog("[RealtimeClient] 📡 Connecting to: %@", url.absoluteString)
+        log("Connecting to: \(url.absoluteString)")
 
         var request = URLRequest(url: url)
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
@@ -371,7 +375,7 @@ actor RealtimeClient {
         let task = session.webSocketTask(with: request)
         self.webSocket = task
         task.resume()
-        NSLog("[RealtimeClient] ✓ WebSocket task resumed")
+        log("WebSocket task resumed")
 
         isConnected = true
 
@@ -381,19 +385,19 @@ actor RealtimeClient {
         }
 
         // Wait for session.created before configuring
-        NSLog("[RealtimeClient] ⏳ Waiting for session.created...")
+        log("Waiting for session.created...")
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             self.sessionCreatedContinuation = continuation
         }
-        NSLog("[RealtimeClient] ✓ Received session.created")
+        log("Received session.created")
 
         // Configure session with audio
-        NSLog("[RealtimeClient] 📤 Configuring session...")
+        log("Configuring session...")
         try await configureSession(instructions: instructions, voice: voice)
-        NSLog("[RealtimeClient] ✓ Session configured")
+        log("Session configured")
 
         await delegate?.realtimeClientDidConnect(self)
-        NSLog("[RealtimeClient] ✓ Connection complete")
+        log("Connection complete")
     }
 
     func disconnect() async {
@@ -428,20 +432,20 @@ actor RealtimeClient {
             maxResponseOutputTokens: .inf
         )
 
-        NSLog("[RealtimeClient] 📋 Config: modalities=text,audio, voice=%@, format=pcm16", voice)
+        log("Config: modalities=text,audio, voice=\(voice), format=pcm16")
 
         let event = SessionUpdateEvent(session: config)
         try await send(event)
 
         // Wait for session.updated confirmation
-        NSLog("[RealtimeClient] ⏳ Waiting for session.updated...")
+        log("Waiting for session.updated...")
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             self.sessionUpdatedContinuation = continuation
         }
-        NSLog("[RealtimeClient] ✓ Session update confirmed")
+        log("Session update confirmed")
 
         // Trigger AI to start the conversation
-        NSLog("[RealtimeClient] 🎤 Triggering initial response...")
+        log("Triggering initial response...")
         try await triggerResponse()
     }
 
@@ -452,7 +456,7 @@ actor RealtimeClient {
 
     /// Commits the audio buffer and triggers a response - use this when create_response is false
     func commitAndRespond() async throws {
-        NSLog("[RealtimeClient] 📤 Committing audio buffer and triggering response...")
+        log("Committing audio buffer and triggering response...")
         try await commitAudioBuffer()
         try await triggerResponse()
     }
@@ -481,7 +485,7 @@ actor RealtimeClient {
 
     func clearAudioBuffer() async throws {
         guard isConnected else { throw RealtimeClientError.notConnected }
-        NSLog("[RealtimeClient] 🗑️ Clearing audio buffer")
+        log("Clearing audio buffer")
         let event = InputAudioBufferClearEvent()
         try await send(event)
     }
@@ -509,18 +513,18 @@ actor RealtimeClient {
 
     private func receiveMessages() async {
         guard let webSocket = webSocket else {
-            NSLog("[RealtimeClient] ⚠️ receiveMessages called but no webSocket")
+            log("receiveMessages called but no webSocket")
             return
         }
 
-        NSLog("[RealtimeClient] 👂 Starting to receive messages...")
+        log("Starting to receive messages...")
 
         while !Task.isCancelled && isConnected {
             do {
                 let message = try await webSocket.receive()
                 await handleMessage(message)
             } catch {
-                NSLog("[RealtimeClient] ❌ Receive error: %@", String(describing: error))
+                log("Receive error: \(String(describing: error))")
                 if !Task.isCancelled {
                     isConnected = false
                     await delegate?.realtimeClientDidDisconnect(self, error: error)
@@ -528,7 +532,7 @@ actor RealtimeClient {
                 break
             }
         }
-        NSLog("[RealtimeClient] 🛑 Stopped receiving messages")
+        log("Stopped receiving messages")
     }
 
     private func handleMessage(_ message: URLSessionWebSocketTask.Message) async {
@@ -546,16 +550,16 @@ actor RealtimeClient {
         // Parse event type first
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let typeString = json["type"] as? String else {
-            NSLog("[RealtimeClient] ⚠️ Could not parse message type")
+            log("Could not parse message type")
             return
         }
 
         switch typeString {
         case "error":
             if let event = try? decoder.decode(ErrorEvent.self, from: data) {
-                NSLog("[RealtimeClient] ❌ Error: %@", event.error.message)
-                NSLog("[RealtimeClient]    Type: %@", event.error.type ?? "unknown")
-                NSLog("[RealtimeClient]    Code: %@", event.error.code ?? "unknown")
+                log("Error: \(event.error.message)")
+                log("Type: \(event.error.type ?? "unknown")")
+                log("Code: \(event.error.code ?? "unknown")")
 
                 let error = RealtimeClientError.apiError(event.error.message)
 
@@ -572,7 +576,7 @@ actor RealtimeClient {
             } else {
                 // Try to print raw error
                 if let errorJson = json["error"] as? [String: Any] {
-                    NSLog("[RealtimeClient] ❌ Raw error: %@", String(describing: errorJson))
+                    log("Raw error: \(String(describing: errorJson))")
                 }
             }
 
@@ -582,10 +586,10 @@ actor RealtimeClient {
                 if let audioData = Data(base64Encoded: event.delta) {
                     await delegate?.realtimeClient(self, didReceiveAudio: audioData)
                 } else {
-                    NSLog("[RealtimeClient] ⚠️ Failed to decode base64 audio delta")
+                    log("Failed to decode base64 audio delta")
                 }
             } catch {
-                NSLog("[RealtimeClient] ⚠️ Failed to decode audio delta event: %@", error.localizedDescription)
+                log("Failed to decode audio delta event: \(error.localizedDescription)")
             }
 
         case "response.audio_transcript.delta":

@@ -15,11 +15,13 @@ struct WriterResponse: Codable {
 
 /// WriterAgent generates blog-style narrative essays from interview analysis
 actor WriterAgent {
-    private let client: OpenAIClient
+    private let llm: LLMClient
+    private var modelConfig: LLMModelConfig
     private var lastActivityTime: Date?
 
-    init(client: OpenAIClient = .shared) {
-        self.client = client
+    init(client: LLMClient, modelConfig: LLMModelConfig) {
+        self.llm = client
+        self.modelConfig = modelConfig
     }
 
     /// Generate a blog post draft from analysis
@@ -95,6 +97,13 @@ actor WriterAgent {
         **Style:** \(style.rawValue)
         \(styleGuidance(for: style))
 
+        **Hard constraints (apply in every style):**
+        - No em dashes or double hyphens; use commas or periods instead.
+        - No overly formal or neutral tone; keep it warm and human.
+        - Vary sentence length and rhythm; avoid repetitive cadence.
+        - Avoid signposting and empty summaries (e.g., "In conclusion," "It's important to note").
+        - Avoid "AI-sounding" vocabulary like "delve," "crucial/vital," "tapestry," "ever-evolving/dynamic," "it's important to note/remember/consider," "a stark reminder."
+
         **Requirements:**
 
         1. **Use first person throughout** - "I learned...", "In my experience...", "Here's what I discovered..."
@@ -115,22 +124,16 @@ actor WriterAgent {
         Target length: 1200-2000 words (adjust based on content richness)
         """
 
-        let response = try await client.chatCompletion(
+        let writerResponse: WriterResponse = try await llm.chatStructured(
             messages: [
                 Message.system(systemPrompt(for: style)),
                 Message.user(userPrompt)
             ],
-            model: "gpt-4o",
-            responseFormat: .jsonSchema(name: "writer_schema", schema: Self.jsonSchema)
+            model: modelConfig.insightModel,
+            schemaName: "writer_schema",
+            schema: Self.jsonSchema,
+            maxTokens: nil
         )
-
-        guard let content = response.choices.first?.message.content,
-              let data = content.data(using: .utf8) else {
-            AgentLogger.error(agent: "Writer", message: "Invalid response from API")
-            throw OpenAIError.invalidResponse
-        }
-
-        let writerResponse = try JSONDecoder().decode(WriterResponse.self, from: data)
 
         AgentLogger.writerComplete(wordCount: writerResponse.wordCount, readingTime: writerResponse.estimatedReadingMinutes)
 

@@ -13,11 +13,37 @@ let package = Package(
             targets: ["Interviewer"]
         )
     ],
+    dependencies: [
+        .package(path: "anthropic-swift-sdk")
+    ],
     targets: [
         .executableTarget(
             name: "Interviewer",
+            dependencies: [
+                .product(name: "AnthropicSwift", package: "anthropic-swift-sdk")
+            ],
             path: ".",
-            exclude: ["Package.swift", "PLAN.md", "CLAUDE.md", "AGENT_ORCHESTRATION.md", "README.md", "LICENSE", "Tests"],
+            exclude: [
+                "Package.swift",
+                "PLAN.md",
+                "CLAUDE.md",
+                "AGENT_ORCHESTRATION.md",
+                "README.md",
+                "LICENSE",
+                "Tests",
+                "Tests/Info.plist",
+                "anthropic-sdk-typescript",
+                "anthropic-swift-sdk",
+                "build",
+                "images",
+                "Essays",
+                "Scripts",
+                "project.yml",
+                "Info.plist",
+                "Interviewer.entitlements",
+                "AGENTS.md",
+                "SWIFT_AGENTS.md"
+            ],
             sources: [
                 "App",
                 "Views",
@@ -32,7 +58,8 @@ let package = Package(
         .testTarget(
             name: "InterviewerTests",
             dependencies: ["Interviewer"],
-            path: "Tests"
+            path: "Tests",
+            exclude: ["Info.plist"]
         )
     ]
 )

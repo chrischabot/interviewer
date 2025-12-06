@@ -68,6 +68,10 @@ final class AudioEngine: @unchecked Sendable {
 
     weak var delegate: AudioEngineDelegate?
 
+    private func log(_ message: String) {
+        StructuredLogger.log(component: "AudioEngine", message: message)
+    }
+
     // Audio level for visualization (0.0 to 1.0)
     // Using a thread-safe box for the level
     private let _audioLevel = AudioLevelBox()
@@ -215,10 +219,10 @@ final class AudioEngine: @unchecked Sendable {
         // Log current audio devices
         #if os(macOS)
         if let inputDevice = getCurrentInputDeviceName() {
-            NSLog("[AudioEngine] Using input device: %@", inputDevice)
+            log("Using input device: \(inputDevice)")
         }
         if let outputDevice = getCurrentOutputDeviceName() {
-            NSLog("[AudioEngine] Using output device: %@", outputDevice)
+            log("Using output device: \(outputDevice)")
         }
         #endif
 
@@ -230,10 +234,10 @@ final class AudioEngine: @unchecked Sendable {
         do {
             try inputNode.setVoiceProcessingEnabled(true)
             inputNode.isVoiceProcessingAGCEnabled = true  // Enable automatic gain control
-            NSLog("[AudioEngine] ✓ Voice processing enabled (AEC, noise suppression, AGC)")
-            NSLog("[AudioEngine] 💡 Tip: Enable 'Voice Isolation' in Control Center for best results")
+            log("Voice processing enabled (AEC, noise suppression, AGC)")
+            log("Tip: Enable 'Voice Isolation' in Control Center for best results")
         } catch {
-            NSLog("[AudioEngine] ⚠️ Could not enable voice processing: %@", error.localizedDescription)
+            log("Could not enable voice processing: \(error.localizedDescription)")
             // Continue without voice processing - will still work but without AEC
         }
 
@@ -256,7 +260,7 @@ final class AudioEngine: @unchecked Sendable {
                 throw AudioEngineError.configurationFailed("Could not create mono input format")
             }
             converterInputFormat = monoFormat
-            NSLog("[AudioEngine] 🎤 Voice processing active: converting %d channels to mono before resampling", inputFormat.channelCount)
+            log("Voice processing active: converting \(inputFormat.channelCount) channels to mono before resampling")
         } else {
             converterInputFormat = inputFormat
         }
@@ -267,8 +271,8 @@ final class AudioEngine: @unchecked Sendable {
         }
         self.audioConverter = converter
 
-        NSLog("[AudioEngine] 🎤 Input format: %.0fHz, %d channels", inputFormat.sampleRate, inputFormat.channelCount)
-        NSLog("[AudioEngine] 🎤 Output format: %.0fHz, %d channels (24kHz PCM16 for API)", outputFormat.sampleRate, outputFormat.channelCount)
+        log(String(format: "Input format: %.0fHz, %d channels", inputFormat.sampleRate, inputFormat.channelCount))
+        log(String(format: "Output format: %.0fHz, %d channels (24kHz PCM16 for API)", outputFormat.sampleRate, outputFormat.channelCount))
 
         // Install tap on input node
         inputNode.installTap(onBus: 0, bufferSize: 4800, format: inputFormat) { [weak self] buffer, _ in
@@ -334,7 +338,7 @@ final class AudioEngine: @unchecked Sendable {
         stopCapturing()
         playerNode.stop()
         engine.stop()
-        NSLog("[AudioEngine] 🛑 Audio engine fully shut down")
+        log("Audio engine fully shut down")
     }
 
     // MARK: - Playback
@@ -422,7 +426,7 @@ final class AudioEngine: @unchecked Sendable {
         }
 
         guard status != .error, error == nil else {
-            NSLog("[AudioEngine] ⚠️ Conversion error: %@", error?.localizedDescription ?? "unknown")
+            log("Conversion error: \(error?.localizedDescription ?? "unknown")")
             return nil
         }
 

@@ -28,11 +28,15 @@ final class AudioDeviceManager {
     var inputDevices: [AudioDevice] = []
     var outputDevices: [AudioDevice] = []
 
+    private func log(_ message: String) {
+        StructuredLogger.log(component: "AudioDeviceManager", message: message)
+    }
+
     var selectedInputDeviceID: String? {
         didSet {
             if let id = selectedInputDeviceID {
                 UserDefaults.standard.set(id, forKey: "selectedInputDeviceID")
-                NSLog("[AudioDeviceManager] Selected input device: %@", id)
+                log("Selected input device: \(id)")
                 #if os(macOS)
                 setInputDevice(uid: id)
                 #endif
@@ -44,7 +48,7 @@ final class AudioDeviceManager {
         didSet {
             if let id = selectedOutputDeviceID {
                 UserDefaults.standard.set(id, forKey: "selectedOutputDeviceID")
-                NSLog("[AudioDeviceManager] Selected output device: %@", id)
+                log("Selected output device: \(id)")
                 #if os(macOS)
                 setOutputDevice(uid: id)
                 #endif
@@ -102,7 +106,7 @@ final class AudioDeviceManager {
         )
 
         guard status == noErr else {
-            NSLog("[AudioDeviceManager] Failed to get devices size: %d", status)
+            log("Failed to get devices size: \(status)")
             return
         }
 
@@ -119,7 +123,7 @@ final class AudioDeviceManager {
         )
 
         guard status == noErr else {
-            NSLog("[AudioDeviceManager] Failed to get devices: %d", status)
+            log("Failed to get devices: \(status)")
             return
         }
 
@@ -140,7 +144,7 @@ final class AudioDeviceManager {
         inputDevices = inputs
         outputDevices = outputs
 
-        NSLog("[AudioDeviceManager] Found %d input devices, %d output devices", inputs.count, outputs.count)
+        log("Found \(inputs.count) input devices, \(outputs.count) output devices")
 
         // If no device selected but we have devices, select the default
         if selectedInputDeviceID == nil, let defaultInput = getDefaultInputDevice() {
@@ -274,7 +278,7 @@ final class AudioDeviceManager {
 
     private func setInputDevice(uid: String) {
         guard let device = inputDevices.first(where: { $0.id == uid }) else {
-            NSLog("[AudioDeviceManager] Input device not found: %@", uid)
+            log("Input device not found: \(uid)")
             return
         }
 
@@ -295,15 +299,15 @@ final class AudioDeviceManager {
         )
 
         if status == noErr {
-            NSLog("[AudioDeviceManager] ✓ Set default input device to: %@", device.name)
+            log("Set default input device to: \(device.name)")
         } else {
-            NSLog("[AudioDeviceManager] ⚠️ Failed to set input device: %d", status)
+            log("Failed to set input device: \(status)")
         }
     }
 
     private func setOutputDevice(uid: String) {
         guard let device = outputDevices.first(where: { $0.id == uid }) else {
-            NSLog("[AudioDeviceManager] Output device not found: %@", uid)
+            log("Output device not found: \(uid)")
             return
         }
 
@@ -324,9 +328,9 @@ final class AudioDeviceManager {
         )
 
         if status == noErr {
-            NSLog("[AudioDeviceManager] ✓ Set default output device to: %@", device.name)
+            log("Set default output device to: \(device.name)")
         } else {
-            NSLog("[AudioDeviceManager] ⚠️ Failed to set output device: %d", status)
+            log("Failed to set output device: \(status)")
         }
     }
 
@@ -348,7 +352,7 @@ final class AudioDeviceManager {
         }
 
         if status != noErr {
-            NSLog("[AudioDeviceManager] Failed to add device change listener: %d", status)
+            log("Failed to add device change listener: \(status)")
         }
     }
     #endif
@@ -392,7 +396,7 @@ final class AudioDeviceManager {
         inputDevices = inputs
         outputDevices = outputs
 
-        NSLog("[AudioDeviceManager] iOS: Found %d input devices, %d output devices", inputs.count, outputs.count)
+        log("iOS: Found \(inputs.count) input devices, \(outputs.count) output devices")
     }
     #endif
 }

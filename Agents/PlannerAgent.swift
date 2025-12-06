@@ -43,11 +43,13 @@ struct PlannerQuestion: Codable {
 
 /// PlannerAgent generates interview plans from topic + context
 actor PlannerAgent {
-    private let client: OpenAIClient
+    private let llm: LLMClient
+    private var modelConfig: LLMModelConfig
     private var lastActivityTime: Date?
 
-    init(client: OpenAIClient = .shared) {
-        self.client = client
+    init(client: LLMClient, modelConfig: LLMModelConfig) {
+        self.llm = client
+        self.modelConfig = modelConfig
     }
 
     /// Generate an interview plan from topic, context, and target duration
@@ -62,22 +64,16 @@ actor PlannerAgent {
         Target duration: \(targetMinutes) minutes
         """
 
-        let response = try await client.chatCompletion(
+        let plan: PlannerResponse = try await llm.chatStructured(
             messages: [
                 Message.system(Self.systemPrompt),
                 Message.user(userPrompt)
             ],
-            model: "gpt-4o",
-            responseFormat: .jsonSchema(name: "plan_schema", schema: Self.jsonSchema)
+            model: modelConfig.insightModel,
+            schemaName: "plan_schema",
+            schema: Self.jsonSchema,
+            maxTokens: nil
         )
-
-        guard let content = response.choices.first?.message.content,
-              let data = content.data(using: .utf8) else {
-            AgentLogger.error(agent: "Planner", message: "Invalid response from API")
-            throw OpenAIError.invalidResponse
-        }
-
-        let plan = try JSONDecoder().decode(PlannerResponse.self, from: data)
         let totalQuestions = plan.sections.reduce(0) { $0 + $1.questions.count }
 
         AgentLogger.plannerComplete(sections: plan.sections.count, questions: totalQuestions, angle: plan.angle)

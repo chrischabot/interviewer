@@ -138,11 +138,13 @@ struct NoteTakerResponse: Codable {
 
 /// NoteTakerAgent extracts insights from the interview transcript in real-time
 actor NoteTakerAgent {
-    private let client: OpenAIClient
+    private let llm: LLMClient
+    private var modelConfig: LLMModelConfig
     private var lastActivityTime: Date?
 
-    init(client: OpenAIClient = .shared) {
-        self.client = client
+    init(client: LLMClient, modelConfig: LLMModelConfig) {
+        self.llm = client
+        self.modelConfig = modelConfig
     }
 
     /// Update notes based on transcript and plan
@@ -201,33 +203,185 @@ actor NoteTakerAgent {
         Build on the existing notes - don't duplicate what's already captured, but do refine or expand.
         """
 
-        let response = try await client.chatCompletion(
+        let noteTakerResponse: NoteTakerResponse = try await llm.chatStructured(
             messages: [
                 Message.system(Self.systemPrompt),
                 Message.user(userPrompt)
             ],
-            model: "gpt-4o",
-            responseFormat: .jsonSchema(name: "notes_schema", schema: Self.jsonSchema)
+            model: modelConfig.speedModel,
+            schemaName: "notes_schema",
+            schema: Self.jsonSchema,
+            maxTokens: nil
         )
+        let newNotes = noteTakerResponse.toNotesState()
 
-        guard let content = response.choices.first?.message.content,
-              let data = content.data(using: .utf8) else {
-            AgentLogger.error(agent: "NoteTaker", message: "Invalid response from API")
-            throw OpenAIError.invalidResponse
-        }
-
-        let noteTakerResponse = try JSONDecoder().decode(NoteTakerResponse.self, from: data)
-        let notes = noteTakerResponse.toNotesState()
+        // CRITICAL: Merge new notes with existing notes to prevent data loss
+        // The LLM is instructed to focus on NEW items, but may forget to include
+        // all previous items. We merge to ensure nothing is lost.
+        let mergedNotes = mergeNotes(existing: currentNotes, new: newNotes)
 
         // Extract short summaries for logging
-        let ideaSummaries = notes.keyIdeas.map { String($0.text.prefix(30)) }
-        let storySummaries = notes.stories.map { String($0.summary.prefix(25)) }
-        let claimSummaries = notes.claims.map { String($0.text.prefix(25)) }
-        let gapSummaries = notes.gaps.map { String($0.description.prefix(25)) }
+        let ideaSummaries = mergedNotes.keyIdeas.map { String($0.text.prefix(30)) }
+        let storySummaries = mergedNotes.stories.map { String($0.summary.prefix(25)) }
+        let claimSummaries = mergedNotes.claims.map { String($0.text.prefix(25)) }
+        let gapSummaries = mergedNotes.gaps.map { String($0.description.prefix(25)) }
 
         AgentLogger.noteTakerFound(ideas: ideaSummaries, stories: storySummaries, claims: claimSummaries, gaps: gapSummaries)
 
-        return notes
+        return mergedNotes
+    }
+
+    // MARK: - Notes Merging
+
+    /// Merge new notes with existing notes to prevent data loss
+    /// Uses text similarity to avoid duplicates
+    private func mergeNotes(existing: NotesState, new: NotesState) -> NotesState {
+        NotesState(
+            keyIdeas: mergeKeyIdeas(existing: existing.keyIdeas, new: new.keyIdeas),
+            stories: mergeStories(existing: existing.stories, new: new.stories),
+            claims: mergeClaims(existing: existing.claims, new: new.claims),
+            gaps: mergeGaps(existing: existing.gaps, new: new.gaps),
+            contradictions: mergeContradictions(existing: existing.contradictions, new: new.contradictions),
+            possibleTitles: mergeTitles(existing: existing.possibleTitles, new: new.possibleTitles),
+            sectionCoverage: mergeSectionCoverage(existing: existing.sectionCoverage, new: new.sectionCoverage),
+            quotableLines: mergeQuotableLines(existing: existing.quotableLines, new: new.quotableLines)
+        )
+    }
+
+    private func mergeKeyIdeas(existing: [KeyIdea], new: [KeyIdea]) -> [KeyIdea] {
+        var merged = existing
+        for newIdea in new {
+            // Check if similar idea already exists (70% text overlap threshold)
+            let isDuplicate = existing.contains { existingIdea in
+                textSimilarity(existingIdea.text, newIdea.text) > 0.7
+            }
+            if !isDuplicate {
+                merged.append(newIdea)
+            }
+        }
+        return merged
+    }
+
+    private func mergeStories(existing: [Story], new: [Story]) -> [Story] {
+        var merged = existing
+        for newStory in new {
+            let isDuplicate = existing.contains { existingStory in
+                textSimilarity(existingStory.summary, newStory.summary) > 0.7
+            }
+            if !isDuplicate {
+                merged.append(newStory)
+            }
+        }
+        return merged
+    }
+
+    private func mergeClaims(existing: [Claim], new: [Claim]) -> [Claim] {
+        var merged = existing
+        for newClaim in new {
+            let isDuplicate = existing.contains { existingClaim in
+                textSimilarity(existingClaim.text, newClaim.text) > 0.7
+            }
+            if !isDuplicate {
+                merged.append(newClaim)
+            }
+        }
+        return merged
+    }
+
+    private func mergeGaps(existing: [Gap], new: [Gap]) -> [Gap] {
+        // For gaps, prefer newer assessments but keep unique old ones
+        var merged: [Gap] = []
+        var usedDescriptions = Set<String>()
+
+        // Add new gaps first (fresher assessment)
+        for gap in new {
+            let normalizedDesc = gap.description.lowercased()
+            if !usedDescriptions.contains(where: { textSimilarity($0, normalizedDesc) > 0.6 }) {
+                merged.append(gap)
+                usedDescriptions.insert(normalizedDesc)
+            }
+        }
+
+        // Add old gaps that aren't covered
+        for gap in existing {
+            let normalizedDesc = gap.description.lowercased()
+            if !usedDescriptions.contains(where: { textSimilarity($0, normalizedDesc) > 0.6 }) {
+                merged.append(gap)
+                usedDescriptions.insert(normalizedDesc)
+            }
+        }
+
+        return merged
+    }
+
+    private func mergeContradictions(existing: [Contradiction], new: [Contradiction]) -> [Contradiction] {
+        var merged = existing
+        for newContradiction in new {
+            let isDuplicate = existing.contains { existingContradiction in
+                textSimilarity(existingContradiction.description, newContradiction.description) > 0.6
+            }
+            if !isDuplicate {
+                merged.append(newContradiction)
+            }
+        }
+        return merged
+    }
+
+    private func mergeTitles(existing: [String], new: [String]) -> [String] {
+        var merged = existing
+        for title in new {
+            let isDuplicate = existing.contains { existingTitle in
+                textSimilarity(existingTitle.lowercased(), title.lowercased()) > 0.7
+            }
+            if !isDuplicate {
+                merged.append(title)
+            }
+        }
+        // Keep only the most recent 10 titles
+        return Array(merged.suffix(10))
+    }
+
+    private func mergeSectionCoverage(existing: [SectionCoverage], new: [SectionCoverage]) -> [SectionCoverage] {
+        // For section coverage, newer assessment replaces older (by section ID)
+        var merged: [String: SectionCoverage] = [:]
+
+        // Add existing first
+        for coverage in existing {
+            merged[coverage.id] = coverage
+        }
+
+        // Overwrite with new (newer assessment is more accurate)
+        for coverage in new {
+            merged[coverage.id] = coverage
+        }
+
+        return Array(merged.values)
+    }
+
+    private func mergeQuotableLines(existing: [QuotableLine], new: [QuotableLine]) -> [QuotableLine] {
+        var merged = existing
+        for newQuote in new {
+            let isDuplicate = existing.contains { existingQuote in
+                textSimilarity(existingQuote.text, newQuote.text) > 0.8  // Higher threshold for exact quotes
+            }
+            if !isDuplicate {
+                merged.append(newQuote)
+            }
+        }
+        return merged
+    }
+
+    /// Simple text similarity using Jaccard coefficient on word sets
+    private func textSimilarity(_ text1: String, _ text2: String) -> Double {
+        let words1 = Set(text1.lowercased().split(separator: " ").map(String.init))
+        let words2 = Set(text2.lowercased().split(separator: " ").map(String.init))
+
+        guard !words1.isEmpty || !words2.isEmpty else { return 0.0 }
+
+        let intersection = words1.intersection(words2).count
+        let union = words1.union(words2).count
+
+        return Double(intersection) / Double(union)
     }
 
     /// Activity score for UI meters (0-1 based on recency)

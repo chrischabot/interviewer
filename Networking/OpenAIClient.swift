@@ -79,7 +79,7 @@ struct ChatCompletionRequest: Codable {
     }
 }
 
-struct ResponseFormat: Codable {
+struct ResponseFormat: Codable, Sendable {
     let type: String
     let jsonSchema: JSONSchemaWrapper?
 
@@ -100,7 +100,7 @@ struct ResponseFormat: Codable {
     }
 }
 
-struct JSONSchemaWrapper: Codable {
+struct JSONSchemaWrapper: Codable, @unchecked Sendable {
     let name: String
     let strict: Bool
     let schema: [String: Any]
@@ -329,7 +329,7 @@ actor OpenAIClient {
 
     private init() {
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 60
+        config.timeoutIntervalForRequest = 120  // writer/analysis calls can be long
         config.timeoutIntervalForResource = 300
         self.session = URLSession(configuration: config)
     }
@@ -339,6 +339,10 @@ actor OpenAIClient {
     private let maxRetries = 3
     private let baseDelaySeconds: Double = 1.0
     private let maxDelaySeconds: Double = 30.0
+
+    private func log(_ message: String) {
+        StructuredLogger.log(component: "OpenAIClient", message: message)
+    }
 
     // MARK: - API Key
 
@@ -370,8 +374,7 @@ actor OpenAIClient {
                     let jitter = Double.random(in: 0...0.5)
                     let sleepDuration = min(delay + jitter, maxDelaySeconds)
 
-                    NSLog("[OpenAI] ⚠️ Attempt %d failed (%@), retrying in %.1fs...",
-                          attemptNumber, error.localizedDescription, sleepDuration)
+                    log("Attempt \(attemptNumber) failed (\(error.localizedDescription)), retrying in \(String(format: "%.1f", sleepDuration))s")
 
                     try await Task.sleep(for: .seconds(sleepDuration))
                     delay *= 2  // Exponential backoff
@@ -415,33 +418,54 @@ actor OpenAIClient {
 
         // Wrap the network request in retry logic
         return try await withRetry { [session] in
+            let startedAt = Date()
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
             request.httpBody = bodyData
 
-            let (data, response) = try await session.data(for: request)
-
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw OpenAIError.invalidResponse
+            let formatDesc: String
+            if let responseFormat {
+                formatDesc = responseFormat.type
+            } else {
+                formatDesc = "text"
             }
 
-            if httpResponse.statusCode != 200 {
-                let errorMessage: String?
-                if let errorResponse = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data) {
-                    errorMessage = errorResponse.error.message
-                } else {
-                    errorMessage = String(data: data, encoding: .utf8)
-                }
-                throw OpenAIError.httpError(statusCode: httpResponse.statusCode, message: errorMessage)
-            }
+            log("POST /chat/completions model=\(model) format=\(formatDesc) tools=\(tools?.count ?? 0)")
 
             do {
-                let decoder = JSONDecoder()
-                return try decoder.decode(ChatCompletionResponse.self, from: data)
+                let (data, response) = try await session.data(for: request)
+
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw OpenAIError.invalidResponse
+                }
+
+                let elapsed = String(format: "%.2fs", Date().timeIntervalSince(startedAt))
+
+                if httpResponse.statusCode != 200 {
+                    let errorMessage: String?
+                    if let errorResponse = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data) {
+                        errorMessage = errorResponse.error.message
+                    } else {
+                        errorMessage = String(data: data, encoding: .utf8)
+                    }
+                    log("HTTP \(httpResponse.statusCode) \(elapsed) model=\(model) error=\(errorMessage ?? "unknown")")
+                    throw OpenAIError.httpError(statusCode: httpResponse.statusCode, message: errorMessage)
+                }
+
+                do {
+                    let decoder = JSONDecoder()
+                    let decoded = try decoder.decode(ChatCompletionResponse.self, from: data)
+                    log("HTTP 200 \(elapsed) model=\(model) tokens=\(decoded.usage?.totalTokens ?? 0)")
+                    return decoded
+                } catch {
+                    log("Decoding error \(elapsed): \(error.localizedDescription)")
+                    throw OpenAIError.decodingError(error)
+                }
             } catch {
-                throw OpenAIError.decodingError(error)
+                log("Network error model=\(model): \(error.localizedDescription)")
+                throw error
             }
         }
     }

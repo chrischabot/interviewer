@@ -16,8 +16,38 @@ struct UtteranceSnapshot: Sendable {
 struct NotesSnapshot: Sendable {
     let keyIdeas: [String]
     let stories: [String]
-    let gaps: [String]
-    let contradictions: [String]
+    let claims: [String]
+    let gaps: [GapSnapshot]
+    let contradictions: [ContradictionSnapshot]
+    let possibleTitles: [String]
+    let sectionCoverage: [SectionCoverageSnapshot]
+    let quotableLines: [QuotableLineSnapshot]
+}
+
+struct GapSnapshot: Sendable {
+    let description: String
+    let suggestedFollowup: String
+}
+
+struct ContradictionSnapshot: Sendable {
+    let description: String
+    let firstQuote: String
+    let secondQuote: String
+    let suggestedClarificationQuestion: String
+}
+
+struct SectionCoverageSnapshot: Sendable {
+    let sectionId: String
+    let sectionTitle: String
+    let coverageQuality: String  // "none" | "shallow" | "adequate" | "deep"
+    let missingAspects: [String]
+}
+
+struct QuotableLineSnapshot: Sendable {
+    let text: String
+    let potentialUse: String  // "hook" | "section_header" | "pull_quote" | "conclusion" | "tweet"
+    let topic: String
+    let strength: String  // "good" | "great" | "exceptional"
 }
 
 /// Response structure for follow-up analysis
@@ -48,10 +78,16 @@ struct FollowUpTopic: Codable, Identifiable {
 
 /// FollowUpAgent analyzes completed sessions to find opportunities for continuation
 actor FollowUpAgent {
-    private let client: OpenAIClient
+    private let llm: LLMClient
+    private var modelConfig: LLMModelConfig
 
-    init(client: OpenAIClient = .shared) {
-        self.client = client
+    init(client: LLMClient, modelConfig: LLMModelConfig) {
+        self.llm = client
+        self.modelConfig = modelConfig
+    }
+
+    private func log(_ message: String) {
+        StructuredLogger.log(component: "FollowUp Agent", message: message)
     }
 
     /// Analyze a completed session and suggest follow-up topics
@@ -59,7 +95,7 @@ actor FollowUpAgent {
         session: SessionSnapshot,
         plan: PlanSnapshot
     ) async throws -> FollowUpAnalysis {
-        NSLog("[FollowUpAgent] 🔍 Analyzing session for follow-up opportunities...")
+        log("Analyzing session for follow-up opportunities...")
 
         // Build transcript text
         let transcriptText = session.utterances
@@ -111,23 +147,18 @@ actor FollowUpAgent {
         Be specific and actionable. Avoid vague suggestions like "explore more about X" - instead, identify the exact thread or gap.
         """
 
-        let response = try await client.chatCompletion(
+        let analysis: FollowUpAnalysis = try await llm.chatStructured(
             messages: [
                 Message.system(systemPrompt),
                 Message.user(userPrompt)
             ],
-            model: "gpt-4o",
-            responseFormat: .jsonSchema(name: "followup_analysis", schema: Self.jsonSchema)
+            model: modelConfig.insightModel,
+            schemaName: "followup_analysis",
+            schema: Self.jsonSchema,
+            maxTokens: nil
         )
 
-        guard let content = response.choices.first?.message.content,
-              let data = content.data(using: .utf8) else {
-            throw OpenAIError.invalidResponse
-        }
-
-        let analysis = try JSONDecoder().decode(FollowUpAnalysis.self, from: data)
-
-        NSLog("[FollowUpAgent] ✅ Found %d follow-up topics", analysis.suggestedTopics.count)
+        log("Found \(analysis.suggestedTopics.count) follow-up topics")
 
         return analysis
     }
@@ -143,12 +174,36 @@ actor FollowUpAgent {
             parts.append("**Stories Captured:** " + notes.stories.joined(separator: "; "))
         }
 
+        if !notes.claims.isEmpty {
+            parts.append("**Claims Made:** " + notes.claims.joined(separator: "; "))
+        }
+
         if !notes.gaps.isEmpty {
-            parts.append("**Identified Gaps:** " + notes.gaps.joined(separator: "; "))
+            let gapTexts = notes.gaps.map { "\($0.description) → \($0.suggestedFollowup)" }
+            parts.append("**Identified Gaps:**\n" + gapTexts.map { "• \($0)" }.joined(separator: "\n"))
         }
 
         if !notes.contradictions.isEmpty {
-            parts.append("**Contradictions:** " + notes.contradictions.joined(separator: "; "))
+            let contradictionTexts = notes.contradictions.map { $0.description }
+            parts.append("**Contradictions:** " + contradictionTexts.joined(separator: "; "))
+        }
+
+        // Section coverage - critical for identifying undercovered areas
+        if !notes.sectionCoverage.isEmpty {
+            let coverageSummary = notes.sectionCoverage.map { coverage in
+                let missing = coverage.missingAspects.isEmpty ? "" : " (missing: \(coverage.missingAspects.joined(separator: ", ")))"
+                return "\(coverage.sectionTitle): \(coverage.coverageQuality)\(missing)"
+            }
+            parts.append("**Section Coverage:**\n" + coverageSummary.map { "• \($0)" }.joined(separator: "\n"))
+        }
+
+        // Quotable lines - helps identify what resonated
+        if !notes.quotableLines.isEmpty {
+            let exceptional = notes.quotableLines.filter { $0.strength == "exceptional" }
+            if !exceptional.isEmpty {
+                let quotes = exceptional.prefix(3).map { "\"\($0.text)\" (\($0.topic))" }
+                parts.append("**Best Quotes:**\n" + quotes.map { "• \($0)" }.joined(separator: "\n"))
+            }
         }
 
         return parts.joined(separator: "\n\n")

@@ -5,10 +5,13 @@ import Foundation
 struct ResearchItem: Codable, Identifiable, Equatable {
     let id: String
     let topic: String
-    let kind: String  // "definition" | "counterpoint" | "example" | "metric"
+    let kind: String  // "definition" | "counterpoint" | "example" | "metric" | "claim_verification"
     let summary: String
     let howToUseInQuestion: String
     let priority: Int
+    // Claim verification fields (populated when kind = "claim_verification")
+    let verificationStatus: String?  // "verified" | "contradicted" | "partially_true" | "unverifiable"
+    let verificationNote: String?    // Explanation of verification result
 
     init(
         id: String = UUID().uuidString,
@@ -16,7 +19,9 @@ struct ResearchItem: Codable, Identifiable, Equatable {
         kind: String,
         summary: String,
         howToUseInQuestion: String,
-        priority: Int = 2
+        priority: Int = 2,
+        verificationStatus: String? = nil,
+        verificationNote: String? = nil
     ) {
         self.id = id
         self.topic = topic
@@ -24,6 +29,18 @@ struct ResearchItem: Codable, Identifiable, Equatable {
         self.summary = summary
         self.howToUseInQuestion = howToUseInQuestion
         self.priority = priority
+        self.verificationStatus = verificationStatus
+        self.verificationNote = verificationNote
+    }
+
+    /// Whether this is a verified claim that matches what the expert said
+    var isVerifiedClaim: Bool {
+        kind == "claim_verification" && verificationStatus == "verified"
+    }
+
+    /// Whether this contradicts what the expert said
+    var isContradictedClaim: Bool {
+        kind == "claim_verification" && verificationStatus == "contradicted"
     }
 }
 
@@ -38,9 +55,15 @@ enum ResearchItemKind: String, CaseIterable, Codable {
     case company
     case context
     case trend
+    case claimVerification = "claim_verification"
 
     var displayName: String {
-        rawValue.capitalized
+        switch self {
+        case .claimVerification:
+            return "Claim Verification"
+        default:
+            return rawValue.capitalized
+        }
     }
 
     var description: String {
@@ -61,6 +84,8 @@ enum ResearchItemKind: String, CaseIterable, Codable {
             return "Background context or historical information"
         case .trend:
             return "Current trend or emerging pattern"
+        case .claimVerification:
+            return "Verification of a specific claim or statistic"
         }
     }
 }

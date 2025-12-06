@@ -20,6 +20,8 @@ The Interviewer app employs a multi-agent architecture where seven specialized A
 12. [Interview Closing Detection](#interview-closing-detection)
 13. [Writer Voice Matching](#writer-voice-matching)
 14. [SwiftData Actor Patterns](#swiftdata-actor-patterns)
+15. [Processing Optimization](#processing-optimization)
+16. [Test Suite](#test-suite)
 
 ---
 
@@ -947,6 +949,126 @@ let planId = plan.id
 let descriptor = FetchDescriptor<InterviewSession>(
     predicate: #Predicate { $0.plan?.id == planId }
 )
+```
+
+---
+
+## Processing Optimization
+
+The coordinator implements smart skip logic to avoid wasteful API calls:
+
+### No-Content Skip
+When no new transcript content has arrived since the last processing cycle, the NoteTaker and Researcher agents are skipped entirely:
+
+```
+ℹ️ Coordinator: Skipping NoteTaker/Researcher - no new content
+```
+
+### Decision Reuse
+When the Orchestrator ran recently (within ~30 seconds) and no new content has arrived, the previous decision is reused:
+
+```
+ℹ️ Coordinator: Reusing previous Orchestrator decision (no new content, 8s since last run)
+```
+
+This optimization significantly reduces API costs during pauses in conversation while ensuring immediate responsiveness when new content arrives.
+
+---
+
+## Test Suite
+
+The agent orchestration system is covered by a comprehensive test suite with **158 tests across 10 test suites**. The tests verify agent communication, data flow, and coordination without requiring live API calls.
+
+### Test Architecture
+
+```
+Tests/
+├── Mocks/
+│   └── MockOpenAIClient.swift     # Deterministic responses for testing
+├── AgentCoordinatorTests.swift    # State management, question tracking
+├── NoteTakerMergeTests.swift      # Notes accumulation with deduplication
+├── ResearcherAgentTests.swift     # Topic tracking, cooldown, refresh
+├── FollowUpDataFlowTests.swift    # Session context, transcript merging
+├── PhaseTransitionTests.swift     # Phase boundaries, callbacks, locking
+├── EndToEndOrchestrationTests.swift  # Full interview lifecycle
+├── PropertyCompletenessTests.swift   # Model property coverage
+├── NotesStateTests.swift          # Helper methods, coverage tracking
+├── OrchestratorDecisionTests.swift   # Decision structure validation
+└── PlanSnapshotTests.swift        # Plan serialization
+```
+
+### What the Tests Cover
+
+| Suite | Tests | Focus |
+|-------|-------|-------|
+| **AgentCoordinator Integration** | 18 | State management, question tracking, phase management |
+| **End-to-End Orchestration** | 18 | Full interview lifecycle, parallel execution, error handling |
+| **FollowUp Data Flow** | 18 | Session context preservation, transcript merging, quote dedup |
+| **NoteTaker Merge** | 17 | Jaccard similarity deduplication, accumulation, preservation |
+| **NotesState** | 7 | Helper methods, coverage tracking, summary building |
+| **OrchestratorDecision** | 7 | Phase enums, JSON encoding/decoding |
+| **Phase Transition** | 22 | Phase boundaries (15%/85%), callbacks, follow-up handling |
+| **PlanSnapshot** | 6 | Structure validation, JSON serialization |
+| **Property Completeness** | 30 | All model properties, merge appends (not overwrites) |
+| **ResearcherAgent** | 15 | Topic tracking, deduplication, cooldown logic |
+
+### Key Test Patterns
+
+**Mock Client**: `MockOpenAIClient` provides deterministic responses based on schema names, enabling reproducible tests:
+
+```swift
+class MockOpenAIClient {
+    func chatCompletion(...) async throws -> ChatCompletionResponse {
+        // Returns fixture data based on responseFormat schema name
+        switch responseFormat.schemaName {
+        case "notes_schema": return TestFixtures.notesResponse
+        case "orchestrator_decision_schema": return TestFixtures.decisionResponse
+        // ...
+        }
+    }
+}
+```
+
+**Jaccard Similarity Testing**: Merge tests verify deduplication thresholds work correctly:
+
+```swift
+// Key ideas: 0.7 threshold
+// Contradictions: 0.6 threshold
+// Quotable lines: 0.8 threshold
+
+// Test verifies similar items are deduplicated
+let merged = NotesState.merge(existing: existing, new: new)
+#expect(merged.keyIdeas.count == 1)  // Not 2 - similar idea deduplicated
+```
+
+**Parallel Execution Verification**: Tests confirm NoteTaker and Researcher run concurrently:
+
+```swift
+@Test("NoteTaker and Researcher run in parallel")
+func parallelExecution() async throws {
+    // ... simulate cycle ...
+    let order = orchestrator.agentExecutionOrder
+
+    // Both should start before either completes
+    let noteTakerIndex = order.firstIndex(of: "noteTaker")!
+    let researcherIndex = order.firstIndex(of: "researcher")!
+    let orchestratorIndex = order.firstIndex(of: "orchestrator")!
+
+    #expect(orchestratorIndex > noteTakerIndex)
+    #expect(orchestratorIndex > researcherIndex)
+}
+```
+
+### Running the Tests
+
+```bash
+# Run all agent tests
+xcodebuild test -scheme Interviewer -destination 'platform=macOS' \
+    -only-testing:InterviewerTests
+
+# Run specific test suite
+xcodebuild test -scheme Interviewer -destination 'platform=macOS' \
+    -only-testing:InterviewerTests/NoteTakerMergeTests
 ```
 
 ---

@@ -771,6 +771,35 @@ Avoid phantom argument patterns:
 - Standard interview: **14 minutes** (includes exploration time)
 - Follow-up interview: **6 minutes** (focused deep-dive)
 
+### Agent Processing Optimization
+The coordinator implements smart skip logic to reduce API costs:
+- **No-content skip**: When no new transcript content, NoteTaker and Researcher are skipped
+- **Decision reuse**: When Orchestrator ran recently (~30s) with no new content, previous decision is reused
+- **Phase locking**: Once wrap_up phase (85%) is reached, phase cannot regress
+
+---
+
+## Test Suite
+
+The project includes **158 tests across 10 test suites** verifying agent orchestration without live API calls:
+
+| Suite | Focus |
+|-------|-------|
+| AgentCoordinator Integration | State, question tracking, phases |
+| End-to-End Orchestration | Full lifecycle, parallel execution |
+| FollowUp Data Flow | Context preservation, transcript merging |
+| NoteTaker Merge | Jaccard similarity deduplication |
+| Phase Transition | Boundaries, callbacks, phase locking |
+| Property Completeness | All model properties, merge behavior |
+
+### Running Tests
+```bash
+xcodebuild test -scheme Interviewer -destination 'platform=macOS' \
+    -only-testing:InterviewerTests
+```
+
+See `AGENT_ORCHESTRATION.md` for detailed test documentation.
+
 ---
 
 ## Constraints

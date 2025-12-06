@@ -52,3 +52,40 @@ targets:
         COMBINE_HIDPI_IMAGES: YES
         PROVISIONING_PROFILE_SPECIFIER: ""
         CODE_SIGN_IDENTITY: "Developer ID Application: The Photo Map LLC (28FC5D45XH)"
+
+  InterviewerTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests
+        excludes:
+          - "**/.DS_Store"
+    dependencies:
+      - target: Interviewer
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.thephotomap.Interviewer.Tests
+        INFOPLIST_FILE: Tests/Info.plist
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Interviewer.app/Contents/MacOS/Interviewer"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        DEVELOPMENT_TEAM: 28FC5D45XH
+        CODE_SIGN_IDENTITY: "Developer ID Application: The Photo Map LLC (28FC5D45XH)"
+
+schemes:
+  Interviewer:
+    build:
+      targets:
+        Interviewer: all
+        InterviewerTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - InterviewerTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

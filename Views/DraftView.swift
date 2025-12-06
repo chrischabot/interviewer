@@ -55,6 +55,10 @@ struct DraftView: View {
         sessions.first { $0.id == sessionId }
     }
 
+    private func log(_ message: String) {
+        StructuredLogger.log(component: "DraftView", message: message)
+    }
+
     var body: some View {
         Group {
             if let session {
@@ -286,12 +290,12 @@ struct DraftView: View {
             if plan.isFollowUp, let previousSessionId = plan.previousSessionId {
                 previousTranscript = await fetchPreviousTranscript(sessionId: previousSessionId)
                 if let prev = previousTranscript {
-                    NSLog("[DraftView] 📎 Found previous transcript with %d entries for combined essay", prev.count)
+                    log("Found previous transcript with \(prev.count) entries for combined essay")
                 } else {
-                    NSLog("[DraftView] ⚠️ Follow-up plan but no previous transcript found for session: %@", previousSessionId.uuidString)
+                    log("Follow-up plan but no previous transcript found for session: \(previousSessionId.uuidString)")
                 }
             } else if plan.isFollowUp {
-                NSLog("[DraftView] ⚠️ Follow-up plan but previousSessionId is nil")
+                log("Follow-up plan but previousSessionId is nil")
             }
 
             // Generate draft
@@ -314,7 +318,7 @@ struct DraftView: View {
                 do {
                     try modelContext.save()
                 } catch {
-                    NSLog("[DraftView] ⚠️ Failed to save draft: %@", error.localizedDescription)
+                    log("Failed to save draft: \(error.localizedDescription)")
                 }
 
                 markdownContent = markdown
@@ -350,7 +354,7 @@ struct DraftView: View {
         do {
             let sessions = try modelContext.fetch(descriptor)
             guard let previousSession = sessions.first else {
-                NSLog("[DraftView] ⚠️ Previous session not found: %@", sessionId.uuidString)
+                log("Previous session not found: \(sessionId.uuidString)")
                 return nil
             }
 
@@ -365,7 +369,7 @@ struct DraftView: View {
                     )
                 }
         } catch {
-            NSLog("[DraftView] ⚠️ Failed to fetch previous session: %@", error.localizedDescription)
+            log("Failed to fetch previous session: \(error.localizedDescription)")
             return nil
         }
     }
