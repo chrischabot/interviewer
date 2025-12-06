@@ -915,12 +915,21 @@ struct InterviewView: View {
     let planId: UUID
 
     @Query private var plans: [Plan]
+    @Query private var sessions: [InterviewSession]
     @State private var sessionManager = InterviewSessionManager()
     @State private var showEndConfirmation = false
     @State private var savedSessionId: UUID?
 
     private var plan: Plan? {
         plans.first { $0.id == planId }
+    }
+
+    /// Find the previous session if this is a follow-up plan
+    private var previousSession: InterviewSession? {
+        guard let plan, plan.isFollowUp, let previousId = plan.previousSessionId else {
+            return nil
+        }
+        return sessions.first { $0.id == previousId }
     }
 
     var body: some View {
@@ -1016,7 +1025,8 @@ struct InterviewView: View {
             // Auto-start session when view appears
             if sessionManager.state == .idle {
                 Task {
-                    await sessionManager.startSession(plan: plan)
+                    // Pass previous session for follow-ups to preserve context
+                    await sessionManager.startSession(plan: plan, previousSession: previousSession)
                 }
             }
         }
@@ -1426,29 +1436,29 @@ struct RecentConversationRow: View {
 
             Spacer()
 
-            // Resume button - continue the conversation
+            // Edit/follow-up button - continue the conversation
             Button {
                 onResume()
-            } label: {
-                Image(systemName: "arrow.clockwise.circle")
-                    .font(.title3)
-                    .foregroundStyle(.blue)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Continue conversation")
-            .accessibilityHint("Pick up where you left off with follow-up questions")
-
-            // Fresh start button - view/edit the plan
-            Button {
-                onFresh()
             } label: {
                 Image(systemName: "doc.text")
                     .font(.title3)
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("View plan")
-            .accessibilityHint("Open the interview plan to view or start fresh")
+            .accessibilityLabel("Continue conversation")
+            .accessibilityHint("Pick up where you left off with follow-up questions")
+
+            // New conversation button - view/edit the plan and start fresh
+            Button {
+                onFresh()
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Start new conversation")
+            .accessibilityHint("Open the interview plan to start a fresh conversation")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)

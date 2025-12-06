@@ -74,6 +74,20 @@ final class NotesStateModel {
         get { (try? JSONDecoder().decode([QuotableLine].self, from: quotableLinesJSON)) ?? [] }
         set { quotableLinesJSON = (try? JSONEncoder().encode(newValue)) ?? Data() }
     }
+
+    /// Convert to plain NotesState struct for agent communication
+    func toNotesState() -> NotesState {
+        NotesState(
+            keyIdeas: keyIdeas,
+            stories: stories,
+            claims: claims,
+            gaps: gaps,
+            contradictions: contradictions,
+            possibleTitles: possibleTitles,
+            sectionCoverage: sectionCoverage,
+            quotableLines: quotableLines
+        )
+    }
 }
 
 // MARK: - Plain Swift Structs for Agent I/O

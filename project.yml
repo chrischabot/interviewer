@@ -1,0 +1,54 @@
+name: Interviewer
+options:
+  bundleIdPrefix: com.thephotomap
+  deploymentTarget:
+    macOS: "15.0"
+  xcodeVersion: "16.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: 28FC5D45XH
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "Developer ID Application: The Photo Map LLC (28FC5D45XH)"
+    PROVISIONING_PROFILE_SPECIFIER: ""
+
+targets:
+  Interviewer:
+    type: application
+    platform: macOS
+    sources:
+      - path: App
+        excludes:
+          - "**/.DS_Store"
+      - path: Views
+        excludes:
+          - "**/.DS_Store"
+      - path: Models
+        excludes:
+          - "**/.DS_Store"
+      - path: Networking
+        excludes:
+          - "**/.DS_Store"
+      - path: Security
+        excludes:
+          - "**/.DS_Store"
+      - path: State
+        excludes:
+          - "**/.DS_Store"
+      - path: Agents
+        excludes:
+          - "**/.DS_Store"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.thephotomap.Interviewer
+        INFOPLIST_FILE: Info.plist
+        CODE_SIGN_ENTITLEMENTS: Interviewer.entitlements
+        ENABLE_HARDENED_RUNTIME: YES
+        PRODUCT_NAME: Interviewer
+        COMBINE_HIDPI_IMAGES: YES
+        PROVISIONING_PROFILE_SPECIFIER: ""
+        CODE_SIGN_IDENTITY: "Developer ID Application: The Photo Map LLC (28FC5D45XH)"

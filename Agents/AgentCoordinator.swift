@@ -89,6 +89,81 @@ actor AgentCoordinator {
         await researcherAgent.reset()
     }
 
+    /// Start a follow-up session, preserving context from previous session
+    /// This ensures the agents know what was already discussed and don't repeat questions
+    func startFollowUpSession(
+        previousTranscript: [TranscriptEntry],
+        previousNotes: NotesState,
+        previousPlan: PlanSnapshot
+    ) async {
+        AgentLogger.sessionStarted()
+        AgentLogger.info(agent: "Coordinator", message: "Starting follow-up session with \(previousTranscript.count) previous exchanges")
+
+        // Reset accumulating state but preserve knowledge
+        accumulatedResearch = []
+        agentActivity = [:]
+        lastProcessedTranscriptHash = 0
+        lastProcessedFinalCount = 0
+        lastOrchestratorRunTime = nil
+        lastOrchestratorDecision = nil
+        lockedPhase = nil  // Fresh start for follow-up timing
+
+        // Extract questions that were asked in the previous session
+        // Look at assistant messages that appear to be questions
+        recentlyAskedQuestionTexts = []
+        askedQuestionThemes = []
+
+        for entry in previousTranscript where entry.speaker == "assistant" {
+            let text = entry.text
+            // If it contains a question mark, it's likely a question
+            if text.contains("?") {
+                recentlyAskedQuestionTexts.append(text)
+                // Extract and track themes
+                let themes = extractThemes(from: text)
+                askedQuestionThemes.formUnion(themes)
+            }
+        }
+
+        // Keep only recent questions to avoid huge context
+        if recentlyAskedQuestionTexts.count > maxRecentQuestions {
+            recentlyAskedQuestionTexts = Array(recentlyAskedQuestionTexts.suffix(maxRecentQuestions))
+        }
+
+        // Mark questions from previous plan as asked if they were covered
+        askedQuestionIds = []
+        for section in previousPlan.sections {
+            for question in section.questions {
+                // Check if this question (or something similar) was asked
+                if isQuestionCoveredInTranscript(question.text, transcript: previousTranscript) {
+                    askedQuestionIds.insert(question.id)
+                }
+            }
+        }
+
+        // Preserve notes from previous session
+        finalNotes = previousNotes
+
+        AgentLogger.info(agent: "Coordinator", message: "Restored \(askedQuestionIds.count) asked questions, \(askedQuestionThemes.count) themes, \(recentlyAskedQuestionTexts.count) recent questions")
+
+        // Reset researcher but it will get context from the follow-up
+        await researcherAgent.reset()
+    }
+
+    /// Check if a question was covered in the transcript
+    private func isQuestionCoveredInTranscript(_ questionText: String, transcript: [TranscriptEntry]) -> Bool {
+        let questionWords = normalizeForMatching(questionText)
+        guard !questionWords.isEmpty else { return false }
+
+        for entry in transcript where entry.speaker == "assistant" {
+            let entryWords = normalizeForMatching(entry.text)
+            let similarity = calculateSimilarity(questionWords, entryWords)
+            if similarity > 0.4 {
+                return true
+            }
+        }
+        return false
+    }
+
     /// Store final notes when interview ends (for use in post-processing)
     func storeNotes(_ notes: NotesState) {
         finalNotes = notes

@@ -109,7 +109,7 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
 
     // MARK: - Session Control
 
-    func startSession(plan: Plan) async {
+    func startSession(plan: Plan, previousSession: InterviewSession? = nil) async {
         // Ensure delegates are configured before starting
         await ensureDelegatesConfigured()
 
@@ -137,8 +137,34 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
         self.isProcessingAgents = false
         self.planSnapshot = plan.toSnapshot()
 
-        // Initialize agent coordinator for new session
-        await AgentCoordinator.shared.startNewSession()
+        // Initialize agent coordinator - preserve context if this is a follow-up
+        if plan.isFollowUp, let previousSession = previousSession {
+            NSLog("[InterviewSession] 📚 Loading context from previous session with %d utterances", previousSession.utterances.count)
+
+            // Convert utterances to transcript entries
+            let previousTranscript = previousSession.utterances.map { utterance in
+                TranscriptEntry(
+                    speaker: utterance.speaker,
+                    text: utterance.text,
+                    timestamp: utterance.timestamp,
+                    isFinal: true
+                )
+            }
+
+            // Get previous notes
+            let previousNotes = previousSession.notesState?.toNotesState() ?? .empty
+
+            // Get the original plan snapshot (if available)
+            let previousPlanSnapshot = previousSession.plan?.toSnapshot() ?? plan.toSnapshot()
+
+            await AgentCoordinator.shared.startFollowUpSession(
+                previousTranscript: previousTranscript,
+                previousNotes: previousNotes,
+                previousPlan: previousPlanSnapshot
+            )
+        } else {
+            await AgentCoordinator.shared.startNewSession()
+        }
 
         state = .connecting
 
