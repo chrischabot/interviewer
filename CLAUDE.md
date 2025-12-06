@@ -4,7 +4,7 @@
 
 A **fully native Swift app** (macOS 26 Tahoe + iOS 26) that interviews users podcast-style on a topic and produces blog-ready narrative essays. Uses **OpenAI exclusively** for all AI capabilities. **No backend server required** - all agents run directly on-device.
 
-**Core Vision**: "Talk for 5-15 minutes about a deep topic. The app interviews you, live-researches threads, tracks insights, and generates a strong narrative that can ship as a blog post."
+**Core Vision**: "Talk for 14 minutes about a deep topic. The app interviews you, live-researches threads, tracks insights, and generates a strong narrative that can ship as a blog post. When there's more to say, resume with a 6-minute follow-up that enriches the original."
 
 **Tagline**: *"You don't know what you know, until you are asked."*
 
@@ -141,7 +141,7 @@ AnalysisSummary → WriterAgent → Markdown Draft → DraftView
 
 ## Multi-Agent System
 
-Six specialized agents, all **Swift actors** calling OpenAI Chat Completions API directly:
+Seven specialized agents, all **Swift actors** calling OpenAI Chat Completions API directly:
 
 | Agent | Purpose | When |
 |-------|---------|------|
@@ -150,7 +150,8 @@ Six specialized agents, all **Swift actors** calling OpenAI Chat Completions API
 | **Researcher** | Web search for new concepts (OpenAI web_search tool) | Live |
 | **Orchestrator** | Choose next question based on plan, notes, time | Live |
 | **Analysis** | Extract claims, themes, tensions, quotable lines | Post-interview |
-| **Writer** | Generate blog-style narrative essay | Post-interview |
+| **Writer** | Generate first-person blog-style narrative essay | Post-interview |
+| **Follow-Up** | Analyze completed sessions, suggest 3 topics for continuation | Resume flow |
 
 ### Agent Execution Pattern
 
@@ -194,7 +195,13 @@ actor AgentCoordinator {
     var topic: String
     var researchGoal: String
     var angle: String
-    var targetSeconds: Int
+    var targetSeconds: Int  // Default: 840 (14 minutes)
+
+    // Follow-up support
+    var isFollowUp: Bool = false
+    var previousSessionId: UUID?  // The session this continues
+    var followUpContext: String = ""  // Selected topics/questions
+
     @Relationship(deleteRule: .cascade) var sections: [Section]
 }
 
@@ -264,19 +271,21 @@ struct AnalysisSummary: Codable {
 enum NavigationState {
     case home
     case planning(planId: UUID)
-    case interview(sessionId: UUID)
+    case interview(planId: UUID)
     case analysis(sessionId: UUID)
     case draft(sessionId: UUID)
+    case followUp(sessionId: UUID)  // Resume flow
     case settings
 }
 ```
 
 ### Views
-- `HomeView` - Topic/goal/duration input
+- `HomeView` - Topic/goal/duration input, recent conversations with resume/fresh icons
 - `PlanEditorView` - Edit sections & questions
 - `InterviewView` - Live voice UI with timer, transcript, agent meters
 - `AnalysisView` - Research goal answers, themes, quotes
-- `DraftView` - Markdown preview, export
+- `DraftView` - Markdown preview, 4 style options, export
+- `FollowUpView` - Analyze previous session, select topics for 6-min follow-up
 - `SettingsView` - API key management, audio device selection
 
 ### State Management
@@ -552,8 +561,9 @@ actor KeychainManager {
 
 ### 2. Topic Capture (HomeView)
 - Enter topic, optional context
-- Set duration (5-20 min slider)
+- Set duration (default 14 min, range 5-20)
 - "Generate interview plan"
+- Recent conversations show resume/fresh icons
 
 ### 3. Plan Review (PlanEditorView)
 - Edit research goal & angle
@@ -563,18 +573,29 @@ actor KeychainManager {
 
 ### 4. Live Interview (InterviewView)
 - Timer (mm:ss), current question display
-- Live speaker-tagged transcript
+- Live speaker-tagged transcript with auto-scroll
 - Section coverage indicators
 - Agent activity meters (bottom bar)
+- **Exploration time**: Built-in flexibility for whimsical discovery
+- **Closing detection**: AI closing phrase → stop audio → blue "Next" button
 
 ### 5. Analysis (AnalysisView)
 - Main claims, themes, tensions
 - Quotable lines
 - Adjust title
+- For follow-ups: analyzes combined transcript
 
 ### 6. Draft (DraftView)
 - Markdown preview
+- 4 style options: Standard, Punchy, Reflective, Zinsser
 - Copy / Export / Share
+
+### 7. Follow-Up (FollowUpView)
+- Resume icon on HomeView → navigate here
+- Follow-Up Agent analyzes previous session
+- Shows 3 suggested topics with questions
+- User selects topics → 6-minute follow-up interview
+- Combined analysis and essay generation
 
 ---
 
@@ -661,6 +682,7 @@ Interviewer/
 │   ├── InterviewView.swift
 │   ├── AnalysisView.swift
 │   ├── DraftView.swift
+│   ├── FollowUpView.swift
 │   └── SettingsView.swift
 ├── Models/                            # SwiftData @Model classes
 │   ├── Plan.swift
@@ -678,7 +700,8 @@ Interviewer/
 │   ├── ResearcherAgent.swift
 │   ├── OrchestratorAgent.swift
 │   ├── AnalysisAgent.swift
-│   └── WriterAgent.swift
+│   ├── WriterAgent.swift
+│   └── FollowUpAgent.swift
 ├── Networking/
 │   ├── OpenAIClient.swift            # Chat Completions API
 │   ├── RealtimeClient.swift          # WebSocket to Realtime API
@@ -692,6 +715,61 @@ Interviewer/
 └── Prompts/
     └── AgentPrompts.swift            # System prompts for all agents
 ```
+
+---
+
+## Development Patterns & Lessons Learned
+
+### SwiftData + Actors
+When passing SwiftData `@Model` objects to actor methods, create **snapshot structs** first:
+```swift
+// DON'T: Pass @Model directly to actor (causes data race warnings)
+let result = try await agent.analyze(session: session)
+
+// DO: Create Sendable snapshot, then pass
+let snapshot = SessionSnapshot(id: session.id, utterances: ...)
+let result = try await agent.analyze(session: snapshot)
+```
+
+### SwiftData Predicates
+Capture values before predicates—don't reference external objects:
+```swift
+// DON'T: Reference external object in predicate
+#Predicate { $0.plan?.id == plan.id }
+
+// DO: Capture the value first
+let planId = plan.id
+#Predicate { $0.plan?.id == planId }
+```
+
+### Follow-Up Session Merging
+When analyzing or writing for follow-up sessions, **always combine transcripts**:
+```swift
+if plan.isFollowUp, let previousSessionId = plan.previousSessionId {
+    let previousTranscript = await fetchPreviousTranscript(sessionId: previousSessionId)
+    transcript = previousTranscript + currentTranscript
+}
+```
+
+### Closing Detection Flow
+When AI says closing phrase:
+1. Immediately stop audio capture and Realtime connection
+2. Don't wait—stop everything to prevent phantom responses
+3. Change UI from red "End" to blue "Next" button
+4. User controls when to proceed to Analysis
+
+### Writer Agent Voice
+Essays are **first-person ghostwriting**, not third-party journalism:
+- ❌ "One expert reminds us..." / "According to the interviewee..."
+- ✅ "I learned..." / "In my experience..." / "Here's what I discovered..."
+
+Avoid phantom argument patterns:
+- ❌ "It's not just about X" / "More than merely Y"
+- ✅ State positively what something IS, not what it's NOT
+
+### Default Durations
+- Standard interview: **14 minutes** (includes exploration time)
+- Follow-up interview: **6 minutes** (focused deep-dive)
 
 ---
 

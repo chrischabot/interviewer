@@ -145,6 +145,8 @@ struct ContentView: View {
                         AnalysisView(sessionId: sessionId)
                     case .draft(let sessionId):
                         DraftView(sessionId: sessionId)
+                    case .followUp(let sessionId):
+                        FollowUpView(sessionId: sessionId)
                     case .settings:
                         SettingsView()
                     }
@@ -187,7 +189,7 @@ struct HomeView: View {
 
     @State private var topic = ""
     @State private var context = ""
-    @State private var durationMinutes: Double = 10
+    @State private var durationMinutes: Double = 14
     @State private var showAdvancedOptions = false
     @State private var isGenerating = false
     @State private var generationStage: PlanGenerationStage = .idle
@@ -360,38 +362,46 @@ struct HomeView: View {
 
             VStack(spacing: 8) {
                 ForEach(recentPlans.prefix(5)) { plan in
-                    Button {
-                        appState.navigate(to: .planning(planId: plan.id))
-                    } label: {
-                        HStack {
-                            Text(plan.topic)
-                                .font(.subheadline)
-                                .lineLimit(1)
-
-                            Spacer()
-
-                            Text(plan.createdAt, style: .relative)
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
-
-                            Image(systemName: "chevron.right")
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
+                    RecentConversationRow(
+                        plan: plan,
+                        onResume: {
+                            startFollowUp(for: plan)
+                        },
+                        onFresh: {
+                            appState.navigate(to: .planning(planId: plan.id))
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color.primary.opacity(0.03))
-                        )
-                    }
-                    .buttonStyle(.plain)
+                    )
                 }
             }
             .frame(maxWidth: 500)
         }
         .padding(.horizontal, 32)
         .padding(.bottom, 32)
+    }
+
+    private func startFollowUp(for plan: Plan) {
+        // Find the most recent completed session for this plan
+        let planId = plan.id
+        let descriptor = FetchDescriptor<InterviewSession>(
+            predicate: #Predicate { session in
+                session.plan?.id == planId && session.endedAt != nil
+            },
+            sortBy: [SortDescriptor(\.endedAt, order: .reverse)]
+        )
+
+        do {
+            let sessions = try modelContext.fetch(descriptor)
+            if let lastSession = sessions.first {
+                // Navigate to follow-up flow
+                appState.navigate(to: .followUp(sessionId: lastSession.id))
+            } else {
+                // No completed session, just go to planning
+                appState.navigate(to: .planning(planId: plan.id))
+            }
+        } catch {
+            NSLog("[HomeView] ⚠️ Failed to fetch sessions: %@", error.localizedDescription)
+            appState.navigate(to: .planning(planId: plan.id))
+        }
     }
 
     // MARK: - Actions
@@ -445,7 +455,7 @@ struct HomeView: View {
                     // Clear form
                     topic = ""
                     context = ""
-                    durationMinutes = 10
+                    durationMinutes = 14
                     showAdvancedOptions = false
                     isGenerating = false
                     generationStage = .idle
@@ -933,10 +943,23 @@ struct InterviewView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 if sessionManager.state == .active || sessionManager.state == .paused {
-                    Button("End") {
-                        showEndConfirmation = true
+                    if sessionManager.hasDetectedClosing {
+                        // Interview naturally concluded - show Next button
+                        Button {
+                            Task {
+                                await endAndSaveSession()
+                            }
+                        } label: {
+                            Label("Next", systemImage: "arrow.right")
+                        }
+                        .buttonStyle(.borderedProminent)
+                    } else {
+                        // Still active - show End button
+                        Button("End") {
+                            showEndConfirmation = true
+                        }
+                        .foregroundStyle(.red)
                     }
-                    .foregroundStyle(.red)
                 }
             }
         }
@@ -1295,6 +1318,12 @@ struct InterviewView: View {
                 NSLog("[InterviewView] ⚠️ Failed to save session: %@", error.localizedDescription)
             }
             savedSessionId = session.id
+
+            // Store notes and navigate to analysis
+            Task {
+                await AgentCoordinator.shared.storeNotes(sessionManager.currentNotes)
+            }
+            appState.navigate(to: .analysis(sessionId: session.id))
         }
     }
 }
@@ -1381,6 +1410,54 @@ struct CircularProgressView: View {
     }
 }
 
+
+// MARK: - Recent Conversation Row
+
+struct RecentConversationRow: View {
+    let plan: Plan
+    let onResume: () -> Void
+    let onFresh: () -> Void
+
+    var body: some View {
+        HStack {
+            Text(plan.topic)
+                .font(.subheadline)
+                .lineLimit(1)
+
+            Spacer()
+
+            // Resume button - continue the conversation
+            Button {
+                onResume()
+            } label: {
+                Image(systemName: "arrow.clockwise.circle")
+                    .font(.title3)
+                    .foregroundStyle(.blue)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Continue conversation")
+            .accessibilityHint("Pick up where you left off with follow-up questions")
+
+            // Fresh start button - view/edit the plan
+            Button {
+                onFresh()
+            } label: {
+                Image(systemName: "doc.text")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("View plan")
+            .accessibilityHint("Open the interview plan to view or start fresh")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.primary.opacity(0.03))
+        )
+    }
+}
 
 #Preview {
     ContentView()

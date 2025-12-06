@@ -9,6 +9,8 @@ struct OrchestratorContext {
     let elapsedSeconds: Int
     let targetSeconds: Int
     let askedQuestionIds: Set<String>  // Track which planned questions have been asked
+    let recentlyAskedTexts: [String]   // Recent question texts to avoid repetition
+    let askedThemes: Set<String>       // Themes already covered to avoid thematic repetition
 }
 
 /// Lightweight snapshot of Plan for agent communication (avoids SwiftData in actor)
@@ -126,23 +128,40 @@ actor OrchestratorAgent {
             }
         }
 
+        // Build recently asked questions to avoid repetition
+        var recentlyAskedSummary = ""
+        if !context.recentlyAskedTexts.isEmpty {
+            recentlyAskedSummary = "**Recently Asked Questions (DO NOT REPEAT OR REPHRASE THESE):**\n"
+            for (index, text) in context.recentlyAskedTexts.suffix(5).enumerated() {
+                let shortText = String(text.prefix(100))
+                recentlyAskedSummary += "\(index + 1). \(shortText)...\n"
+            }
+        }
+
+        // Build themes already covered to avoid thematic repetition
+        var themesSummary = ""
+        if !context.askedThemes.isEmpty {
+            let themesList = context.askedThemes.sorted().joined(separator: ", ")
+            themesSummary = "**Themes Already Covered (AVOID THESE):** \(themesList)\n"
+        }
+
         // Build notes summary
         var notesSummary = ""
         if !context.notes.keyIdeas.isEmpty {
             notesSummary += "**Key Ideas Captured:**\n"
-            notesSummary += context.notes.keyIdeas.map { "- \($0.text)" }.joined(separator: "\n")
+            notesSummary += context.notes.keyIdeas.prefix(5).map { "- \($0.text)" }.joined(separator: "\n")
             notesSummary += "\n\n"
         }
         if !context.notes.gaps.isEmpty {
             notesSummary += "**Gaps to Explore:**\n"
-            for gap in context.notes.gaps {
+            for gap in context.notes.gaps.prefix(3) {
                 notesSummary += "- \(gap.description)\n  → Suggested: \(gap.suggestedFollowup)\n"
             }
             notesSummary += "\n"
         }
         if !context.notes.contradictions.isEmpty {
             notesSummary += "**Contradictions to Clarify:**\n"
-            for contradiction in context.notes.contradictions {
+            for contradiction in context.notes.contradictions.prefix(2) {
                 notesSummary += "- \(contradiction.description)\n"
                 notesSummary += "  First: \"\(contradiction.firstQuote)\"\n"
                 notesSummary += "  Second: \"\(contradiction.secondQuote)\"\n"
@@ -155,7 +174,7 @@ actor OrchestratorAgent {
         var researchSummary = ""
         if !context.research.isEmpty {
             researchSummary = "**Research Insights Available:**\n"
-            for item in context.research.sorted(by: { $0.priority < $1.priority }) {
+            for item in context.research.sorted(by: { $0.priority < $1.priority }).prefix(5) {
                 researchSummary += "- [\(item.kind)] \(item.topic): \(item.summary)\n"
                 researchSummary += "  → How to use: \(item.howToUseInQuestion)\n"
             }
@@ -178,6 +197,9 @@ actor OrchestratorAgent {
 
         ---
 
+        \(recentlyAskedSummary.isEmpty ? "" : recentlyAskedSummary + "\n")
+        \(themesSummary.isEmpty ? "" : themesSummary + "\n---\n")
+
         ## Notes from Conversation
         \(notesSummary.isEmpty ? "(No significant notes yet)" : notesSummary)
 
@@ -198,12 +220,14 @@ actor OrchestratorAgent {
         2. What is the best next question to ask?
         3. How should the interviewer approach this question?
 
-        Consider:
-        - Prioritize P1 (must-hit) questions if they haven't been asked
-        - If the expert mentioned something interesting, follow up on it
-        - If there's a gap or contradiction, address it
-        - If research provides a useful insight, incorporate it
+        **CRITICAL RULES:**
+        - NEVER suggest a question similar to one in "Recently Asked Questions"
+        - AVOID questions touching themes listed in "Themes Already Covered"
+        - If the expert already answered something, move to a DIFFERENT topic
+        - Prioritize P1 questions marked "○ NOT ASKED"
+        - Each question should explore a DIFFERENT aspect than previous questions
         - In wrap_up phase, focus on synthesis and closing reflection
+        - Do NOT ask the same closing question twice (e.g., "what do you wish people understood")
         """
     }
 
@@ -243,6 +267,13 @@ actor OrchestratorAgent {
     - `gap` - Addressing a gap in coverage
     - `contradiction` - Clarifying a contradiction
     - `research` - Incorporating research insights
+
+    **⚠️ CRITICAL - AVOID REPETITION:**
+    - Check the "Recently Asked Questions" list - NEVER ask a similar question
+    - If you see a question about "examples" was already asked, don't ask for more examples
+    - If you see a question about "industries" was already asked, don't ask about industries again
+    - Each new question MUST explore a genuinely DIFFERENT aspect of the topic
+    - Variety is key to a good interview - don't circle back to the same themes
 
     **Guidelines:**
     - Prioritize P1 questions marked "○ NOT ASKED" - these are must-hit

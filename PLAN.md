@@ -14,8 +14,9 @@ This document is intended as a **full specification** for an AI code agent (e.g.
 * macOS 26 Tahoe + iOS/iPadOS 26 (universal app)
 * Swift 6+, SwiftUI, Liquid Glass design
 * Single source of AI capability: **OpenAI** (Realtime + Chat Completions APIs, structured outputs, web search tools)
-* Voice-first UX: 5–15 minute conversations via OpenAI Realtime
-* Multi-agent orchestration running **directly on-device** (Planner, Note-Taker, Researcher, Orchestrator, Analysis, Writer)
+* Voice-first UX: 14-minute default conversations via OpenAI Realtime (with built-in exploration time)
+* Multi-agent orchestration running **directly on-device** (Planner, Note-Taker, Researcher, Orchestrator, Analysis, Writer, Follow-Up)
+* **Follow-up sessions**: Resume previous conversations with 6-minute deep-dives on unexplored threads
 * Anthropic-style interview methodology: **"Interview me to produce a killer essay, not a social-science report."**
 * Local data persistence with **SwiftData**
 * Secure API key storage via **iOS/macOS Keychain**
@@ -106,9 +107,23 @@ A **voice-driven thinking partner** for subject-matter experts:
 
    * Writer agent generates:
      * At least one long-form essay draft (~1,200–1,800 words).
-     * Optional alternate styles (e.g. "punchy / reflective").
+     * Four style options: Standard, Punchy, Reflective, Zinsser (clear nonfiction).
+   * Essays written in **first person** as the author's voice (not third-party "one expert says...").
+   * For follow-up sessions: combines original + follow-up transcripts into unified narrative.
 
-7. **Draft management**
+7. **Follow-up Sessions**
+
+   * From home screen, users can:
+     * **Resume** a previous session (analyze for unexplored threads)
+     * **Start fresh** with same topic (new plan)
+   * Follow-Up Agent analyzes completed sessions and suggests:
+     * 3 topics to explore further
+     * 2-3 questions per topic
+     * Unexplored gaps and areas to strengthen
+   * Follow-up interviews are 6 minutes by default.
+   * Analysis and Writer agents merge both transcripts for combined output.
+
+8. **Draft management**
 
    * Show markdown preview in app.
    * Copy to clipboard.
@@ -680,18 +695,27 @@ final class Plan {
     var topic: String
     var researchGoal: String
     var angle: String
-    var targetSeconds: Int
+    var targetSeconds: Int  // Default: 840 (14 minutes)
     var createdAt: Date
+
+    // Follow-up support
+    var isFollowUp: Bool = false
+    var previousSessionId: UUID?  // The session this is a follow-up to
+    var followUpContext: String = ""  // Selected topics and questions
 
     @Relationship(deleteRule: .cascade) var sections: [Section]
 
-    init(topic: String, researchGoal: String, angle: String, targetSeconds: Int) {
+    init(topic: String, researchGoal: String, angle: String, targetSeconds: Int,
+         isFollowUp: Bool = false, previousSessionId: UUID? = nil, followUpContext: String = "") {
         self.id = UUID()
         self.topic = topic
         self.researchGoal = researchGoal
         self.angle = angle
         self.targetSeconds = targetSeconds
         self.createdAt = Date()
+        self.isFollowUp = isFollowUp
+        self.previousSessionId = previousSessionId
+        self.followUpContext = followUpContext
         self.sections = []
     }
 }
@@ -877,11 +901,18 @@ struct Quote: Codable, Identifiable {
 @Model
 final class Draft {
     var id: UUID
-    var style: String  // "standard" | "punchy" | "reflective"
+    var style: String  // "standard" | "punchy" | "reflective" | "zinsser"
     var markdownContent: String
     var createdAt: Date
 
     var session: InterviewSession?
+}
+
+enum DraftStyle: String, CaseIterable {
+    case standard   // Elegant prose with clear narrative arc
+    case punchy     // Direct, energetic, slightly provocative
+    case reflective // Thoughtful, contemplative pace
+    case zinsser    // Clear, concise nonfiction (On Writing Well rules)
 }
 ```
 
@@ -1019,7 +1050,8 @@ func processLiveUpdate(...) async throws -> (...) {
 | **Researcher** | Web search for new concepts, produce ResearchItems |
 | **Orchestrator** | Choose next question based on plan, notes, research, time |
 | **Analysis** | Post-hoc: answer research goal, extract claims, themes, quotes |
-| **Writer** | Turn AnalysisSummary + plan into blog-style narrative |
+| **Writer** | Turn AnalysisSummary + plan into blog-style narrative (first-person voice) |
+| **Follow-Up** | Analyze completed sessions, suggest 3 topics with questions for continuation |
 
 ---
 
@@ -1147,20 +1179,47 @@ Set as `session.instructions` for Realtime:
 
 ### 8.7 Writer agent prompt
 
-> You are a **long-form essay writer** turning an interview into a coherent narrative blog post.
+> You are a **ghostwriter** helping someone turn their spoken interview into a polished personal essay. The essay will be published as THEIR blog post, in THEIR voice, under THEIR name.
+>
+> **Critical: This is FIRST PERSON writing.** You are not a journalist writing about "an expert." You are channeling the author's voice.
 >
 > Input:
 > – The AnalysisSummary.
 > – The original plan.
-> – Optionally, a style preference.
+> – Style preference (standard/punchy/reflective/zinsser).
+> – For follow-ups: both original and follow-up transcripts.
 >
-> Your tasks:
-> – Draft a **first-person essay** (~1,200–1,800 words) in the interviewee's voice.
-> – Use the mainClaims, themes, and tensions as your spine.
-> – Weave in the selected quotes naturally.
-> – Organize into 3–7 sections with Markdown headings.
-> – Start with a strong hook reflecting the angle.
-> – End with a reflective conclusion.
+> **Writing Philosophy:**
+> – Write with wit and warmth—erudite without being stuffy.
+> – Let ideas flow naturally with varied sentence rhythm.
+> – **Avoid phantom argument patterns** like "not just X" or "more than merely Y" (argues against objections nobody raised).
+> – Start strong—no "In this essay, I'll discuss..."
+> – Show, don't tell—use concrete examples over abstract claims.
+> – End with resonance—leave something that lingers.
+>
+> **Anti-patterns to avoid:**
+> – "It's not just about X" / "Not merely Y" / "More than just Z"
+> – "One expert says..." / "According to..." (this IS the expert speaking)
+> – Generic business-speak ("leverage," "synergy," "optimize")
+>
+> Output: First-person essay (~1,200–1,800 words) with Markdown formatting.
+
+### 8.8 Follow-Up agent prompt
+
+> You are an **interview analyst** reviewing a completed session to identify opportunities for a meaningful follow-up conversation.
+>
+> Input:
+> – The original plan (topic, research goal, angle).
+> – The session transcript.
+> – Any notes captured during the session.
+>
+> Focus on finding:
+> – **Unexplored threads** – Topics mentioned but not fully explored.
+> – **Gaps in the story** – Missing context, unexplained decisions, skipped details.
+> – **Areas to deepen** – Points that deserve more examples or elaboration.
+> – **New angles** – Fresh perspectives that emerged but weren't pursued.
+>
+> Output: 3 compelling follow-up topics, each with 2-3 specific questions.
 
 ---
 
@@ -1272,8 +1331,14 @@ actor KeychainManager {
      * Update UI (section coverage, gaps)
      * Call `realtimeClient.updateInstructions()` with next question
 
-3. When target time reached (or user stops):
-   * Prompt: "Extend time?" or "Stop & proceed to analysis"
+3. **Exploration time**: 14-minute default includes flexibility for whimsical discovery. When unexpected but fascinating threads emerge, follow them.
+
+4. **Closing detection**: When AI says closing phrase ("thank you for sharing..."):
+   * Immediately stop audio capture and Realtime connection
+   * Red "End" button becomes blue "Next" button
+   * User clicks "Next" → save session → navigate to Analysis
+
+5. Manual end: User can click "End" at any time (with confirmation dialog)
 
 ### 10.4 Post-interview
 
@@ -1295,7 +1360,28 @@ actor KeychainManager {
      * Copy to clipboard
      * Export to `.md` file
      * Share (iOS share sheet / macOS share)
-     * Request alternate style
+     * Select from 4 styles (Standard, Punchy, Reflective, Zinsser)
+
+### 10.5 Follow-up Sessions
+
+1. From **HomeView**, user sees recent conversations with two icons:
+   * **Resume** (arrow.clockwise) → Continue with follow-up
+   * **Fresh** (plus.circle) → Start new session with same topic
+
+2. On "Resume":
+   * Navigate to **FollowUpView**
+   * Follow-Up Agent analyzes previous session
+   * Shows 3 suggested topics with questions
+
+3. User selects topics → "Start 6-Minute Follow-Up":
+   * Creates new Plan with `isFollowUp = true` and `previousSessionId`
+   * Navigates to InterviewView
+   * Interviewer references previous conversation
+
+4. Post-interview:
+   * Analysis combines both transcripts
+   * Writer weaves both conversations into unified narrative
+   * Essay reflects the full depth of combined sessions
 
 ---
 

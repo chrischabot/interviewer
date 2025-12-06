@@ -22,7 +22,7 @@ An interview changes everything.
 
 When someone asks "What was the moment you realized this approach wouldn't work?"—suddenly the story pours forth, vivid and immediate. The questioner provides what the blank page cannot: direction, curiosity, and the gentle pressure of another mind wanting to understand.
 
-**Interviewer** amplifies this dynamic through multi-agent orchestration. While you converse naturally with a single voice, six specialized intelligences collaborate invisibly:
+**Interviewer** amplifies this dynamic through multi-agent orchestration. While you converse naturally with a single voice, seven specialized intelligences collaborate invisibly:
 
 - **The Planner** designs the interview's arc before a word is spoken
 - **The Note-Taker** tracks every insight, gap, and contradiction
@@ -30,8 +30,9 @@ When someone asks "What was the moment you realized this approach wouldn't work?
 - **The Orchestrator** selects each question with strategic precision
 - **The Analyst** distills the conversation into themes and claims
 - **The Writer** transforms the whole into a publishable narrative
+- **The Follow-Up Agent** identifies unexplored threads for deeper conversations
 
-You speak for fifteen minutes. You receive an essay that captures what you actually believe.
+You speak for fourteen minutes. You receive an essay that captures what you actually believe—in your voice, not some generic polished style.
 
 ---
 
@@ -47,9 +48,11 @@ The effect is uncanny. The conversation feels guided by someone who was paying a
 
 ## The Promise
 
-Speak for a quarter hour about something you know deeply. Receive prose that sounds like you at your most articulate—the essay you would have written if you had infinite patience and perfect recall.
+Speak for fourteen minutes about something you know deeply. Receive prose that sounds like you at your most articulate—the essay you would have written if you had infinite patience and perfect recall.
 
 This is not transcription. This is translation: from the meandering river of spoken thought to the structured clarity of the written word.
+
+And when you realize there's more to say? Resume the conversation. The app analyzes what you've already discussed, identifies the threads left unexplored, and proposes a focused six-minute follow-up. The resulting essay weaves both conversations into a single, richer narrative.
 
 ---
 
@@ -70,9 +73,9 @@ This is not transcription. This is translation: from the meandering river of spo
 │  │   ┌─────────┐  ┌──────────┐  ┌──────────┐  ┌────────────┐  │  │
 │  │   │ Planner │  │Note-Taker│  │Researcher│  │Orchestrator│  │  │
 │  │   └─────────┘  └──────────┘  └──────────┘  └────────────┘  │  │
-│  │   ┌─────────┐  ┌──────────┐                                 │  │
-│  │   │ Analyst │  │  Writer  │                                 │  │
-│  │   └─────────┘  └──────────┘                                 │  │
+│  │   ┌─────────┐  ┌──────────┐  ┌──────────┐                  │  │
+│  │   │ Analyst │  │  Writer  │  │ Follow-Up│                  │  │
+│  │   └─────────┘  └──────────┘  └──────────┘                  │  │
 │  └────────────────────────────────────────────────────────────┘  │
 │                              │                                    │
 │  ┌────────────┐  ┌───────────────┐  ┌──────────────────────┐    │

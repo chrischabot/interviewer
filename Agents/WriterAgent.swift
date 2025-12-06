@@ -23,11 +23,18 @@ actor WriterAgent {
     }
 
     /// Generate a blog post draft from analysis
+    /// - Parameters:
+    ///   - transcript: Current session transcript
+    ///   - analysis: Analysis summary
+    ///   - plan: The interview plan
+    ///   - style: Writing style
+    ///   - previousTranscript: Optional transcript from a previous session (for follow-ups)
     func writeDraft(
         transcript: [TranscriptEntry],
         analysis: AnalysisSummary,
         plan: PlanSnapshot,
-        style: DraftStyle = .standard
+        style: DraftStyle = .standard,
+        previousTranscript: [TranscriptEntry]? = nil
     ) async throws -> String {
         lastActivityTime = Date()
 
@@ -35,10 +42,31 @@ actor WriterAgent {
 
         // Build full transcript for reference
         // Note: The "user" is the author - this is THEIR blog post in THEIR voice
-        let transcriptText = transcript.map { entry in
+        var transcriptText = ""
+
+        // Include previous session transcript if this is a follow-up
+        if let previous = previousTranscript, !previous.isEmpty {
+            let previousText = previous.map { entry in
+                let speaker = entry.speaker == "assistant" ? "Interviewer" : "Author"
+                return "[\(speaker)]: \(entry.text)"
+            }.joined(separator: "\n\n")
+
+            transcriptText = """
+            ### Original Conversation
+            \(previousText)
+
+            ---
+
+            ### Follow-Up Conversation
+            """
+        }
+
+        let currentText = transcript.map { entry in
             let speaker = entry.speaker == "assistant" ? "Interviewer" : "Author"
             return "[\(speaker)]: \(entry.text)"
         }.joined(separator: "\n\n")
+
+        transcriptText += currentText
 
         // Build analysis summary
         let analysisSummary = buildAnalysisSummary(analysis)
@@ -168,6 +196,15 @@ actor WriterAgent {
             - Insights that unfold gradually
             - The wisdom of someone who's earned their perspective
             """
+        case .zinsser:
+            return """
+            - Strip every sentence to its core idea
+            - Short, common words over long or pretentious ones
+            - Active voice, strong concrete verbs
+            - One main idea per sentence, one main point per paragraph
+            - Direct, conversational, human tone - confident and declarative
+            - No jargon, buzzwords, clichés, or filler
+            """
         }
     }
 
@@ -237,6 +274,48 @@ actor WriterAgent {
             - Insights that unfold gradually
             - Some beautiful sentences worth re-reading
             - Leave the reader contemplating
+            """
+        case .zinsser:
+            return """
+            You are a ghostwriter following William Zinsser's principles from "On Writing Well." The essay will be published as the author's blog post, in their voice, under their name. Write in first person.
+
+            **CLARITY & SIMPLICITY**
+            1. Strip every sentence to its core idea. Remove unnecessary words, qualifiers, and repetition.
+            2. Prefer short, common words over long or pretentious ones when the meaning is the same.
+            3. Use active voice by default. Only use passive if the actor is unknown or irrelevant.
+            4. Express one main idea per sentence and one main point per paragraph.
+            5. Explain technical terms so an intelligent non-specialist can follow. Define them briefly when first used.
+
+            **LANGUAGE & TONE**
+            6. Use strong, concrete verbs; avoid abstract noun phrases (e.g., "make a decision" → "decide").
+            7. Avoid jargon, buzzwords, and clichés. Use plain, fresh language instead.
+            8. Write in a direct, conversational, human tone. Do not be breezy, flippant, or patronizing.
+            9. Be confident and declarative. Avoid weak hedging like "sort of," "kind of," "basically," "in a way," unless clearly needed.
+            10. Use inclusive, unbiased language.
+
+            **STRUCTURE & FLOW**
+            11. Start with a clear hook that gives the reader a concrete reason to keep reading (a problem, question, or surprising fact).
+            12. State early what the piece is about and what question or problem it addresses.
+            13. Maintain a narrow focus. Do not wander into tangents or side topics that don't support the main point.
+            14. Organize paragraphs so each one clearly advances the main idea. The last sentence of a paragraph should naturally lead to the next.
+            15. Use simple transitions ("however," "for example," "by contrast," "as a result") to signal changes in direction or emphasis.
+            16. Keep sentences and paragraphs visually short for screen reading. Break up long blocks of text.
+
+            **VOICE & POINT OF VIEW**
+            17. Write as a real person speaking to another real person. Use first person ("I") naturally.
+            18. Take a clear point of view. Make judgments and draw conclusions instead of staying vague or neutral.
+            19. Keep voice, tense, and point of view consistent throughout the piece.
+
+            **EDITING RULES**
+            20. Prefer shorter sentences when a long one can be cleanly split without losing meaning.
+            21. Delete any sentence or phrase that is redundant, overly ornate, or off-topic.
+            22. Avoid long stacks of nouns (e.g., "implementation methodology framework"). Use "subject + strong verb + object" instead.
+            23. When you give an example, explain it clearly and then tie it back to the main point in one or two sentences.
+
+            **HARD DON'TS**
+            24. Do not use corporate buzzwords such as "leverage synergies," "paradigm shift," "cutting-edge solution."
+            25. Do not use filler clichés like "in today's world," "at the end of the day," "needless to say."
+            26. Do not pad the piece to reach a target length. Stop when the explanation is clear, complete, and satisfying.
             """
         }
     }

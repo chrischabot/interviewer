@@ -31,8 +31,27 @@ actor AgentCoordinator {
     private var askedQuestionIds: Set<String> = []
     private var finalNotes: NotesState = .empty
 
+    // Track recently asked question TEXTS to prevent similar questions
+    private var recentlyAskedQuestionTexts: [String] = []
+    private let maxRecentQuestions = 10
+
+    // Track question themes to prevent thematic repetition
+    private var askedQuestionThemes: Set<String> = []
+
     // Agent activity tracking for UI meters
     private var agentActivity: [String: Double] = [:]
+
+    // Transcript change detection to skip redundant processing
+    private var lastProcessedTranscriptHash: Int = 0
+    private var lastProcessedFinalCount: Int = 0  // Count of final (non-streaming) entries
+
+    // Orchestrator throttling when no content changes
+    private var lastOrchestratorRunTime: Date?
+    private var lastOrchestratorDecision: OrchestratorDecision?
+    private let orchestratorMinIntervalNoContent: TimeInterval = 30  // Min 30s between runs if no new content
+
+    // Phase locking to prevent oscillation after 85%
+    private var lockedPhase: String?
 
     // Transcript windowing configuration to control prompt size
     private let maxTranscriptEntriesForNotes = 20      // Note-taker gets recent context
@@ -56,8 +75,15 @@ actor AgentCoordinator {
         AgentLogger.sessionStarted()
         accumulatedResearch = []
         askedQuestionIds = []
+        recentlyAskedQuestionTexts = []
+        askedQuestionThemes = []
         agentActivity = [:]
         finalNotes = .empty
+        lastProcessedTranscriptHash = 0
+        lastProcessedFinalCount = 0
+        lastOrchestratorRunTime = nil
+        lastOrchestratorDecision = nil
+        lockedPhase = nil
 
         // Reset agent state
         await researcherAgent.reset()
@@ -101,6 +127,23 @@ actor AgentCoordinator {
 
     // MARK: - Live Interview (Phase 4)
 
+    /// Compute a hash of final transcript entries to detect meaningful changes
+    private func computeTranscriptHash(_ transcript: [TranscriptEntry]) -> Int {
+        var hasher = Hasher()
+        // Only hash final entries - streaming entries change too frequently
+        let finalEntries = transcript.filter { $0.isFinal }
+        hasher.combine(finalEntries.count)
+        for entry in finalEntries.suffix(10) {
+            hasher.combine(entry.text)
+        }
+        return hasher.finalize()
+    }
+
+    /// Count final (non-streaming) transcript entries
+    private func countFinalEntries(_ transcript: [TranscriptEntry]) -> Int {
+        transcript.filter { $0.isFinal }.count
+    }
+
     /// Process a live update during the interview
     /// Runs NoteTaker and Researcher in parallel, then Orchestrator sequentially
     /// All agents have graceful fallbacks, so this method never throws
@@ -112,77 +155,162 @@ actor AgentCoordinator {
         targetSeconds: Int
     ) async -> LiveUpdateResult {
         let progress = Int(Double(elapsedSeconds) / Double(targetSeconds) * 100)
+        let finalCount = countFinalEntries(transcript)
 
-        AgentLogger.liveUpdateStarted(progress: progress, transcriptCount: transcript.count)
+        AgentLogger.liveUpdateStarted(progress: progress, transcriptCount: finalCount)
 
-        // Update activity indicators
-        updateActivity(agent: "notes", score: 1.0)
-        updateActivity(agent: "research", score: 1.0)
+        // Check if transcript has meaningfully changed since last processing
+        let currentHash = computeTranscriptHash(transcript)
+        let hasNewContent = currentHash != lastProcessedTranscriptHash || finalCount > lastProcessedFinalCount
 
-        AgentLogger.parallelAgentsStarted()
+        // Decide whether to run each agent based on content change
+        let shouldRunNoteTaker = hasNewContent
+        let shouldRunResearcher = hasNewContent
+        // Note: Orchestrator always runs as it considers time-based phase decisions
 
-        // Window transcripts for each agent to control prompt size
-        let notesTranscript = windowTranscript(transcript, maxEntries: maxTranscriptEntriesForNotes)
-        let researchTranscript = windowTranscript(transcript, maxEntries: maxTranscriptEntriesForResearch)
+        var updatedNotes = currentNotes
+        var newResearchItems: [ResearchItem] = []
 
-        // Run NoteTaker and Researcher in parallel with graceful failure handling
-        async let notesTask = runNoteTakerWithFallback(
-            transcript: notesTranscript,
-            currentNotes: currentNotes,
-            plan: plan
-        )
-        async let researchTask = runResearcherWithFallback(
-            transcript: researchTranscript,
-            topic: plan.topic
-        )
+        if shouldRunNoteTaker || shouldRunResearcher {
+            // Update activity indicators
+            updateActivity(agent: "notes", score: shouldRunNoteTaker ? 1.0 : 0.3)
+            updateActivity(agent: "research", score: shouldRunResearcher ? 1.0 : 0.3)
 
-        // Wait for both to complete - failures return fallback values instead of throwing
-        let (updatedNotes, newResearchItems) = await (notesTask, researchTask)
+            AgentLogger.parallelAgentsStarted()
 
-        AgentLogger.parallelAgentsFinished()
+            // Window transcripts for each agent to control prompt size
+            let notesTranscript = windowTranscript(transcript, maxEntries: maxTranscriptEntriesForNotes)
+            let researchTranscript = windowTranscript(transcript, maxEntries: maxTranscriptEntriesForResearch)
 
-        // Update accumulated research
-        accumulatedResearch.append(contentsOf: newResearchItems)
-
-        // Update activity indicators
-        updateActivity(agent: "notes", score: 0.5)
-        updateActivity(agent: "research", score: 0.5)
-        updateActivity(agent: "orchestrator", score: 1.0)
-
-        // Window transcript for orchestrator
-        let orchestratorTranscript = windowTranscript(transcript, maxEntries: maxTranscriptEntriesForOrchestrator)
-
-        // Now run Orchestrator with the combined results (with fallback on failure)
-        let context = OrchestratorContext(
-            plan: plan,
-            transcript: orchestratorTranscript,
-            notes: updatedNotes,
-            research: accumulatedResearch,
-            elapsedSeconds: elapsedSeconds,
-            targetSeconds: targetSeconds,
-            askedQuestionIds: askedQuestionIds
-        )
-
-        let decision = await runOrchestratorWithFallback(context: context, plan: plan)
-
-        // Mark the question as asked for coverage tracking
-        if let questionId = decision.nextQuestion.sourceQuestionId {
-            markQuestionAsked(questionId)
-            AgentLogger.questionMarkedAsked(questionId: questionId, method: "direct ID")
-        } else if decision.nextQuestion.source == "plan" {
-            // Fallback: Try to match by question text similarity if LLM didn't return ID
-            if let matchedId = findMatchingQuestionId(
-                questionText: decision.nextQuestion.text,
-                in: plan
-            ) {
-                markQuestionAsked(matchedId)
-                AgentLogger.questionMarkedAsked(questionId: matchedId, method: "text match")
-            } else {
-                AgentLogger.info(agent: "Coordinator", message: "Plan question suggested but couldn't match ID - coverage tracking may be incomplete")
+            if shouldRunNoteTaker && shouldRunResearcher {
+                // Run both in parallel
+                async let notesTask = runNoteTakerWithFallback(
+                    transcript: notesTranscript,
+                    currentNotes: currentNotes,
+                    plan: plan
+                )
+                async let researchTask = runResearcherWithFallback(
+                    transcript: researchTranscript,
+                    topic: plan.topic
+                )
+                (updatedNotes, newResearchItems) = await (notesTask, researchTask)
+            } else if shouldRunNoteTaker {
+                updatedNotes = await runNoteTakerWithFallback(
+                    transcript: notesTranscript,
+                    currentNotes: currentNotes,
+                    plan: plan
+                )
+            } else if shouldRunResearcher {
+                newResearchItems = await runResearcherWithFallback(
+                    transcript: researchTranscript,
+                    topic: plan.topic
+                )
             }
+
+            AgentLogger.parallelAgentsFinished()
+
+            // Update accumulated research
+            accumulatedResearch.append(contentsOf: newResearchItems)
+
+            // Track that we processed this content
+            lastProcessedTranscriptHash = currentHash
+            lastProcessedFinalCount = finalCount
+        } else {
+            AgentLogger.info(agent: "Coordinator", message: "Skipping NoteTaker/Researcher - no new content")
         }
 
-        updateActivity(agent: "orchestrator", score: 0.5)
+        // Determine if we should run Orchestrator
+        // Skip if: no new content AND ran recently AND not at a phase transition point
+        let timeSinceLastOrchestrator = lastOrchestratorRunTime.map { Date().timeIntervalSince($0) } ?? .infinity
+        let shouldRunOrchestrator = hasNewContent ||
+            timeSinceLastOrchestrator >= orchestratorMinIntervalNoContent ||
+            lastOrchestratorDecision == nil
+
+        var decision: OrchestratorDecision
+
+        if shouldRunOrchestrator {
+            // Update activity indicators
+            updateActivity(agent: "notes", score: 0.5)
+            updateActivity(agent: "research", score: 0.5)
+            updateActivity(agent: "orchestrator", score: 1.0)
+
+            // Window transcript for orchestrator
+            let orchestratorTranscript = windowTranscript(transcript, maxEntries: maxTranscriptEntriesForOrchestrator)
+
+            // Now run Orchestrator with the combined results (with fallback on failure)
+            let context = OrchestratorContext(
+                plan: plan,
+                transcript: orchestratorTranscript,
+                notes: updatedNotes,
+                research: accumulatedResearch,
+                elapsedSeconds: elapsedSeconds,
+                targetSeconds: targetSeconds,
+                askedQuestionIds: askedQuestionIds,
+                recentlyAskedTexts: recentlyAskedQuestionTexts,
+                askedThemes: askedQuestionThemes
+            )
+
+            decision = await runOrchestratorWithFallback(context: context, plan: plan)
+            lastOrchestratorRunTime = Date()
+            lastOrchestratorDecision = decision
+
+            // Apply phase locking after 85% to prevent oscillation
+            let progress = Double(elapsedSeconds) / Double(targetSeconds)
+            if progress >= 0.85 {
+                if lockedPhase == nil {
+                    // Lock to wrap_up phase once we're past 85%
+                    lockedPhase = "wrap_up"
+                    AgentLogger.info(agent: "Coordinator", message: "Locking phase to wrap_up (85% reached)")
+                }
+            }
+
+            // Override phase if locked
+            if let locked = lockedPhase, decision.phase != locked {
+                AgentLogger.info(agent: "Coordinator", message: "Overriding phase from \(decision.phase) to \(locked) (phase locked)")
+                decision = OrchestratorDecision(
+                    phase: locked,
+                    nextQuestion: decision.nextQuestion,
+                    interviewerBrief: decision.interviewerBrief
+                )
+            }
+
+            // Track the question and validate ID before marking
+            let questionText = decision.nextQuestion.text
+            trackAskedQuestion(questionText)
+
+            if let questionId = decision.nextQuestion.sourceQuestionId {
+                // Validate the question ID before marking
+                if isValidQuestionId(questionId, in: plan) {
+                    if !askedQuestionIds.contains(questionId) {
+                        markQuestionAsked(questionId)
+                        AgentLogger.questionMarkedAsked(questionId: questionId, method: "direct ID")
+                    } else {
+                        AgentLogger.info(agent: "Coordinator", message: "Question ID \(questionId.prefix(8))... already marked as asked - skipping duplicate")
+                    }
+                } else {
+                    AgentLogger.info(agent: "Coordinator", message: "Invalid question ID '\(questionId.prefix(20))...' rejected - not in plan")
+                }
+            } else if decision.nextQuestion.source == "plan" {
+                // Fallback: Try to match by question text similarity if LLM didn't return ID
+                if let matchedId = findMatchingQuestionId(
+                    questionText: questionText,
+                    in: plan
+                ) {
+                    if !askedQuestionIds.contains(matchedId) {
+                        markQuestionAsked(matchedId)
+                        AgentLogger.questionMarkedAsked(questionId: matchedId, method: "text match")
+                    }
+                } else {
+                    AgentLogger.info(agent: "Coordinator", message: "Plan question suggested but couldn't match ID - coverage tracking may be incomplete")
+                }
+            }
+
+            updateActivity(agent: "orchestrator", score: 0.5)
+        } else {
+            // Reuse previous decision
+            decision = lastOrchestratorDecision!
+            AgentLogger.info(agent: "Coordinator", message: "Reusing previous Orchestrator decision (no new content, \(Int(timeSinceLastOrchestrator))s since last run)")
+        }
 
         // Build interviewer instructions for Realtime API
         let instructions = buildInterviewerInstructions(
@@ -199,6 +327,61 @@ actor AgentCoordinator {
             decision: decision,
             interviewerInstructions: instructions
         )
+    }
+
+    /// Track question text to prevent similar questions
+    private func trackAskedQuestion(_ text: String) {
+        recentlyAskedQuestionTexts.append(text)
+        // Keep only the most recent questions
+        if recentlyAskedQuestionTexts.count > maxRecentQuestions {
+            recentlyAskedQuestionTexts.removeFirst()
+        }
+
+        // Extract and track themes from this question
+        let themes = extractThemes(from: text)
+        askedQuestionThemes.formUnion(themes)
+    }
+
+    // MARK: - Theme Extraction
+
+    /// Key themes/topics that indicate what a question is about
+    private static let themeKeywords: [String: [String]] = [
+        "examples": ["example", "examples", "instance", "instances", "case", "cases", "scenario", "scenarios"],
+        "industries": ["industry", "industries", "sector", "sectors", "field", "fields", "domain", "domains"],
+        "understanding": ["understand", "understanding", "understood", "misconception", "misconceptions", "misunderstand"],
+        "challenges": ["challenge", "challenges", "difficult", "difficulty", "struggle", "problem", "obstacle"],
+        "advice": ["advice", "recommend", "suggestion", "tips", "guidance", "counsel"],
+        "future": ["future", "next", "upcoming", "trend", "trends", "evolving", "evolution"],
+        "mistakes": ["mistake", "mistakes", "error", "errors", "wrong", "fail", "failure", "failures"],
+        "success": ["success", "successful", "achieve", "achievement", "win", "wins", "victory"],
+        "origin": ["start", "started", "begin", "began", "origin", "origins", "first", "initially"],
+        "difference": ["different", "difference", "differences", "distinguish", "unique", "versus"],
+        "impact": ["impact", "effect", "influence", "affect", "change", "transform"],
+        "wish": ["wish", "wished", "hope", "hoped", "want", "wanted", "desire"]
+    ]
+
+    /// Extract themes from a question text
+    private func extractThemes(from text: String) -> Set<String> {
+        let lowercased = text.lowercased()
+        var themes: Set<String> = []
+
+        for (theme, keywords) in Self.themeKeywords {
+            for keyword in keywords {
+                if lowercased.contains(keyword) {
+                    themes.insert(theme)
+                    break
+                }
+            }
+        }
+
+        return themes
+    }
+
+    /// Check if a question's themes overlap too much with already-asked themes
+    func hasOverlappingThemes(_ questionText: String, maxOverlap: Int = 2) -> Bool {
+        let newThemes = extractThemes(from: questionText)
+        let overlap = newThemes.intersection(askedQuestionThemes)
+        return overlap.count >= maxOverlap
     }
 
     // MARK: - Private Agent Runners with Fallbacks
@@ -349,13 +532,66 @@ actor AgentCoordinator {
         return instructions
     }
 
+    // MARK: - Question ID Validation
+
+    /// Validate that a question ID is legitimate (exists in the plan)
+    /// Rejects fake IDs, null strings, empty strings, and IDs not in the plan
+    private func isValidQuestionId(_ questionId: String, in plan: PlanSnapshot) -> Bool {
+        // Reject obviously invalid IDs
+        let trimmed = questionId.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Check for empty or placeholder values
+        if trimmed.isEmpty { return false }
+        if trimmed.lowercased() == "null" { return false }
+        if trimmed.lowercased().hasPrefix("fake") { return false }
+        if trimmed.lowercased().hasPrefix("n/a") { return false }
+
+        // Verify ID actually exists in the plan
+        for section in plan.sections {
+            for question in section.questions {
+                if question.id == questionId {
+                    return true
+                }
+            }
+        }
+
+        return false
+    }
+
     // MARK: - Question Matching
 
+    // Stop words to filter out for better matching
+    private static let stopWords: Set<String> = [
+        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+        "have", "has", "had", "do", "does", "did", "will", "would", "could",
+        "should", "may", "might", "can", "this", "that", "these", "those",
+        "i", "you", "he", "she", "it", "we", "they", "what", "which", "who",
+        "when", "where", "why", "how", "all", "each", "every", "both", "few",
+        "more", "most", "other", "some", "such", "no", "nor", "not", "only",
+        "own", "same", "so", "than", "too", "very", "just", "about", "into",
+        "through", "during", "before", "after", "above", "below", "to", "from",
+        "up", "down", "in", "out", "on", "off", "over", "under", "again",
+        "further", "then", "once", "here", "there", "any", "your", "their"
+    ]
+
+    /// Normalize text for better matching - remove punctuation, stop words, lowercase
+    private func normalizeForMatching(_ text: String) -> Set<String> {
+        let cleaned = text.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .joined(separator: " ")
+
+        let words = cleaned.components(separatedBy: .whitespaces)
+            .filter { $0.count > 2 && !Self.stopWords.contains($0) }
+
+        return Set(words)
+    }
+
     /// Fallback matching when LLM doesn't return sourceQuestionId
-    /// Uses simple text similarity to find the best matching plan question
+    /// Uses improved text similarity to find the best matching plan question
     private func findMatchingQuestionId(questionText: String, in plan: PlanSnapshot) -> String? {
-        let normalizedQuestion = questionText.lowercased()
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedQuestion = normalizeForMatching(questionText)
+
+        guard !normalizedQuestion.isEmpty else { return nil }
 
         var bestMatch: (id: String, score: Double)?
 
@@ -364,13 +600,15 @@ actor AgentCoordinator {
                 // Skip already-asked questions
                 guard !askedQuestionIds.contains(question.id) else { continue }
 
-                let normalizedPlan = question.text.lowercased()
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let normalizedPlan = normalizeForMatching(question.text)
+
+                guard !normalizedPlan.isEmpty else { continue }
 
                 // Calculate similarity score
                 let score = calculateSimilarity(normalizedQuestion, normalizedPlan)
 
-                if score > 0.6 {  // Threshold for match
+                // Lower threshold (0.35) to catch more rephrased questions
+                if score > 0.35 {
                     if bestMatch == nil || score > bestMatch!.score {
                         bestMatch = (question.id, score)
                     }
@@ -381,11 +619,22 @@ actor AgentCoordinator {
         return bestMatch?.id
     }
 
-    /// Simple word-based similarity (Jaccard-like)
-    private func calculateSimilarity(_ text1: String, _ text2: String) -> Double {
-        let words1 = Set(text1.components(separatedBy: .whitespaces).filter { $0.count > 2 })
-        let words2 = Set(text2.components(separatedBy: .whitespaces).filter { $0.count > 2 })
+    /// Check if a new question is too similar to recently asked questions
+    func isQuestionTooSimilar(_ newQuestion: String, threshold: Double = 0.5) -> Bool {
+        let normalizedNew = normalizeForMatching(newQuestion)
 
+        for askedText in recentlyAskedQuestionTexts {
+            let normalizedAsked = normalizeForMatching(askedText)
+            let similarity = calculateSimilarity(normalizedNew, normalizedAsked)
+            if similarity > threshold {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Jaccard similarity between two word sets
+    private func calculateSimilarity(_ words1: Set<String>, _ words2: Set<String>) -> Double {
         guard !words1.isEmpty && !words2.isEmpty else { return 0 }
 
         let intersection = words1.intersection(words2).count
@@ -427,11 +676,18 @@ actor AgentCoordinator {
     }
 
     /// Generate a draft essay from analysis
+    /// - Parameters:
+    ///   - transcript: Current session transcript
+    ///   - analysis: Analysis summary
+    ///   - plan: The interview plan
+    ///   - style: Writing style
+    ///   - previousTranscript: Optional transcript from previous session (for follow-ups)
     func writeDraft(
         transcript: [TranscriptEntry],
         analysis: AnalysisSummary,
         plan: PlanSnapshot,
-        style: DraftStyle
+        style: DraftStyle,
+        previousTranscript: [TranscriptEntry]? = nil
     ) async throws -> String {
         updateActivity(agent: "writer", score: 1.0)
         defer { updateActivity(agent: "writer", score: 0.5) }
@@ -440,7 +696,8 @@ actor AgentCoordinator {
             transcript: transcript,
             analysis: analysis,
             plan: plan,
-            style: style
+            style: style,
+            previousTranscript: previousTranscript
         )
     }
 }

@@ -19,7 +19,7 @@ enum AgentLogger {
     }
 
     static func liveUpdateStarted(progress: Int, transcriptCount: Int) {
-        log("🎛️ Processing update (\(progress)% through interview, \(transcriptCount) exchanges so far)")
+        log("🎛️ Processing update (\(progress)% through interview, \(transcriptCount) final exchanges)")
     }
 
     static func parallelAgentsStarted() {
@@ -30,10 +30,23 @@ enum AgentLogger {
         log("   ↳ Both finished, asking Orchestrator what to do next")
     }
 
+    static func agentsSkipped(reason: String) {
+        log("⏭️ Agents skipped: \(reason)")
+    }
+
     static func liveUpdateComplete(phase: String, nextQuestion: String) {
         let shortQuestion = String(nextQuestion.prefix(60))
         log("✅ Update complete — now in \(phase) phase")
         log("   ↳ Next: \"\(shortQuestion)...\"")
+    }
+
+    static func contentChangeDetected(hasNewContent: Bool, hashChanged: Bool, countChanged: Bool) {
+        if hasNewContent {
+            var reasons: [String] = []
+            if hashChanged { reasons.append("content changed") }
+            if countChanged { reasons.append("new entries") }
+            log("📊 Content change: \(reasons.joined(separator: ", "))")
+        }
     }
 
     // MARK: - Planner Messages
@@ -85,6 +98,10 @@ enum AgentLogger {
         log("🔍 Researcher scanning for concepts to look up...")
     }
 
+    static func researcherSkipped(reason: String) {
+        log("🔍 Researcher skipped: \(reason)")
+    }
+
     static func researcherIdentifiedTopics(_ topics: [String]) {
         if topics.isEmpty {
             log("🔍 Researcher: nothing new to look up")
@@ -100,6 +117,10 @@ enum AgentLogger {
     static func researcherFound(topic: String, summary: String) {
         let shortSummary = String(summary.prefix(80))
         log("   ↳ Found: \(shortSummary)...")
+    }
+
+    static func researcherError(topic: String, error: String) {
+        log("   ↳ ❌ Research failed for \"\(topic)\": \(error)")
     }
 
     static func researcherComplete(count: Int) {

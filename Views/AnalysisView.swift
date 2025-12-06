@@ -378,14 +378,24 @@ struct AnalysisView: View {
         stage = .analyzing
 
         do {
-            // Convert transcript to TranscriptEntry format
-            let transcript = session.utterances.map { utterance in
+            // Convert current session transcript to TranscriptEntry format
+            var transcript = session.utterances.map { utterance in
                 TranscriptEntry(
                     speaker: utterance.speaker,
                     text: utterance.text,
                     timestamp: utterance.timestamp,
                     isFinal: true
                 )
+            }
+
+            // If this is a follow-up, prepend the original session's transcript
+            if plan.isFollowUp, let previousSessionId = plan.previousSessionId {
+                if let previousTranscript = await fetchPreviousTranscript(sessionId: previousSessionId) {
+                    // Combine: original first, then follow-up
+                    transcript = previousTranscript + transcript
+                    NSLog("[AnalysisView] 📎 Combined transcripts: %d original + %d follow-up entries",
+                          previousTranscript.count, session.utterances.count)
+                }
             }
 
             // Get notes from coordinator, falling back to persisted notes from session
@@ -442,6 +452,35 @@ struct AnalysisView: View {
         appState.selectedDraftStyle = selectedStyle
         appState.currentAnalysis = analysis
         appState.navigate(to: .draft(sessionId: session.id))
+    }
+
+    private func fetchPreviousTranscript(sessionId: UUID) async -> [TranscriptEntry]? {
+        // Fetch the previous session from SwiftData
+        let descriptor = FetchDescriptor<InterviewSession>(
+            predicate: #Predicate { $0.id == sessionId }
+        )
+
+        do {
+            let sessions = try modelContext.fetch(descriptor)
+            guard let previousSession = sessions.first else {
+                NSLog("[AnalysisView] ⚠️ Previous session not found: %@", sessionId.uuidString)
+                return nil
+            }
+
+            return previousSession.utterances
+                .sorted { $0.timestamp < $1.timestamp }
+                .map { utterance in
+                    TranscriptEntry(
+                        speaker: utterance.speaker,
+                        text: utterance.text,
+                        timestamp: utterance.timestamp,
+                        isFinal: true
+                    )
+                }
+        } catch {
+            NSLog("[AnalysisView] ⚠️ Failed to fetch previous session: %@", error.localizedDescription)
+            return nil
+        }
     }
 }
 

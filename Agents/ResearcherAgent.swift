@@ -58,11 +58,23 @@ struct ResearcherResponse: Codable {
 actor ResearcherAgent {
     private let client: OpenAIClient
     private var lastActivityTime: Date?
-    private var researchedTopics: Set<String> = []  // Avoid re-researching same topic
-    private var researchedAt: [String: Date] = [:]  // Track when topics were researched
+
+    // Track topics we've ATTEMPTED to research (not just successful)
+    private var attemptedTopics: Set<String> = []
+    // Track topics that returned useful results
+    private var successfulTopics: Set<String> = []
+    // Track when topics were attempted (for potential refresh)
+    private var attemptedAt: [String: Date] = [:]
 
     // Time after which a topic can be researched again (for fresh context)
     private let topicRefreshInterval: TimeInterval = 300  // 5 minutes
+
+    // Track consecutive failures to avoid wasting API calls
+    private var consecutiveFailures: Int = 0
+    private let maxConsecutiveFailures = 5
+
+    // Content hash to detect if transcript has actually changed
+    private var lastTranscriptHash: Int = 0
 
     init(client: OpenAIClient = .shared) {
         self.client = client
@@ -70,9 +82,12 @@ actor ResearcherAgent {
 
     /// Reset state for a new interview session
     func reset() {
-        researchedTopics = []
-        researchedAt = [:]
+        attemptedTopics = []
+        successfulTopics = []
+        attemptedAt = [:]
         lastActivityTime = nil
+        consecutiveFailures = 0
+        lastTranscriptHash = 0
     }
 
     /// Research new concepts mentioned in the transcript
@@ -83,17 +98,38 @@ actor ResearcherAgent {
     ) async throws -> [ResearchItem] {
         lastActivityTime = Date()
 
+        // Check if transcript has actually changed since last call
+        let currentHash = computeTranscriptHash(transcript)
+        guard currentHash != lastTranscriptHash else {
+            AgentLogger.researcherSkipped(reason: "transcript unchanged")
+            return []
+        }
+        lastTranscriptHash = currentHash
+
         AgentLogger.researcherStarted()
 
-        // Update researched topics from existing research (only if not stale)
-        let now = Date()
-        for item in existingResearch {
-            let topicKey = item.topic.lowercased()
-            // Only mark as researched if we researched it recently
-            if let researchDate = researchedAt[topicKey],
-               now.timeIntervalSince(researchDate) < topicRefreshInterval {
-                researchedTopics.insert(topicKey)
+        // If we've had too many consecutive failures, reduce frequency
+        if consecutiveFailures >= maxConsecutiveFailures {
+            AgentLogger.researcherSkipped(reason: "too many recent failures, cooling down")
+            // Reset after some cycles to try again
+            if consecutiveFailures > maxConsecutiveFailures + 3 {
+                consecutiveFailures = 0
+            } else {
+                consecutiveFailures += 1
             }
+            return []
+        }
+
+        // Refresh attempted topics - allow retry after refresh interval
+        let now = Date()
+        attemptedTopics = attemptedTopics.filter { topicKey in
+            guard let attemptTime = attemptedAt[topicKey] else { return false }
+            return now.timeIntervalSince(attemptTime) < topicRefreshInterval
+        }
+
+        // Also keep track of what's already been successfully researched
+        for item in existingResearch {
+            successfulTopics.insert(item.topic.lowercased())
         }
 
         // First, analyze transcript to identify topics worth researching
@@ -110,23 +146,60 @@ actor ResearcherAgent {
 
         AgentLogger.researcherIdentifiedTopics(topicsToResearch.map { $0.topic })
 
-        // Research each topic using web search
+        // Research each topic using knowledge-based approach
         var newResearchItems: [ResearchItem] = []
+        var hadSuccess = false
 
-        for searchTopic in topicsToResearch.prefix(3) {  // Limit to 3 per cycle to manage cost/latency
-            AgentLogger.researcherLookingUp(topic: searchTopic.topic, reason: searchTopic.kind)
-            if let item = try? await researchTopic(searchTopic) {
-                let topicKey = searchTopic.topic.lowercased()
-                researchedTopics.insert(topicKey)
-                researchedAt[topicKey] = Date()  // Track when we researched this
-                newResearchItems.append(item)
-                AgentLogger.researcherFound(topic: item.topic, summary: item.summary)
+        for searchTopic in topicsToResearch.prefix(3) {  // Limit to 3 per cycle
+            let topicKey = searchTopic.topic.lowercased()
+
+            // Skip if we've already attempted this topic recently
+            if attemptedTopics.contains(topicKey) {
+                AgentLogger.researcherSkipped(reason: "already attempted '\(searchTopic.topic)'")
+                continue
             }
+
+            AgentLogger.researcherLookingUp(topic: searchTopic.topic, reason: searchTopic.kind)
+
+            // Mark as attempted BEFORE the call
+            attemptedTopics.insert(topicKey)
+            attemptedAt[topicKey] = Date()
+
+            do {
+                if let item = try await researchTopic(searchTopic) {
+                    successfulTopics.insert(topicKey)
+                    newResearchItems.append(item)
+                    hadSuccess = true
+                    AgentLogger.researcherFound(topic: item.topic, summary: item.summary)
+                }
+            } catch {
+                // Log the actual error instead of swallowing it
+                AgentLogger.researcherError(topic: searchTopic.topic, error: error.localizedDescription)
+            }
+        }
+
+        // Track consecutive failures for cooldown logic
+        if hadSuccess {
+            consecutiveFailures = 0
+        } else if !topicsToResearch.isEmpty {
+            consecutiveFailures += 1
         }
 
         AgentLogger.researcherComplete(count: newResearchItems.count)
 
         return newResearchItems
+    }
+
+    /// Compute a simple hash of transcript content to detect changes
+    private func computeTranscriptHash(_ transcript: [TranscriptEntry]) -> Int {
+        var hasher = Hasher()
+        hasher.combine(transcript.count)
+        // Hash only the last few entries for efficiency
+        for entry in transcript.suffix(10) {
+            hasher.combine(entry.text)
+            hasher.combine(entry.isFinal)
+        }
+        return hasher.finalize()
     }
 
     /// Activity score for UI meters (0-1 based on recency)
@@ -148,14 +221,16 @@ actor ResearcherAgent {
             return "[\(speaker)]: \(entry.text)"
         }.joined(separator: "\n\n")
 
-        let existingTopics = existingResearch.map { $0.topic }
-        let researchedList = existingTopics.isEmpty ? "None yet" : existingTopics.joined(separator: ", ")
+        // Combine existing research AND attempted topics to avoid repeats
+        var alreadyHandled: [String] = existingResearch.map { $0.topic }
+        alreadyHandled.append(contentsOf: attemptedTopics.map { $0 })
+        let researchedList = alreadyHandled.isEmpty ? "None yet" : alreadyHandled.joined(separator: ", ")
 
         let userPrompt = """
         ## Interview Topic
         \(topic)
 
-        ## Already Researched
+        ## Already Researched/Attempted (DO NOT SUGGEST THESE)
         \(researchedList)
 
         ## Recent Transcript
@@ -163,22 +238,23 @@ actor ResearcherAgent {
 
         ---
 
-        **Your mission:** Find 2-3 specific things from this conversation that would be worth researching.
+        **Your mission:** Find 1-2 SPECIFIC, UNIQUE things from this conversation that would be worth providing context on.
 
-        Scan the transcript for:
-        - Names (people, companies, products, frameworks)
-        - Technical terms or jargon
-        - Claims about trends, numbers, or outcomes
-        - Challenges or problems the expert mentions
-        - References to events, tools, or methodologies
+        Look for:
+        - Specific names (people, companies, products, frameworks) that were JUST mentioned
+        - Technical terms or jargon the expert used
+        - Specific claims about numbers, statistics, or outcomes
+        - References to specific events, tools, or methodologies
 
-        For each topic you identify:
-        - Explain WHY it would help the interviewer
-        - Suggest a specific search query to find useful info
+        **CRITICAL RULES:**
+        1. DO NOT suggest generic topics like "AI-native applications" or the main interview topic itself
+        2. DO NOT suggest anything in the "Already Researched/Attempted" list
+        3. ONLY suggest specific, concrete things the expert mentioned (names, products, companies, specific terms)
+        4. If nothing specific and new was mentioned, return an EMPTY array
 
-        **Important:** Don't hold back! Even if a topic seems well-known, there might be recent news, statistics, or alternative perspectives worth noting. The interviewer benefits from ANY context you can provide.
-
-        Only skip topics that are in the "Already Researched" list above.
+        For each topic:
+        - Be VERY specific (e.g., "GPT-4" not "language models")
+        - Explain WHY it would help the interviewer with a follow-up question
         """
 
         let response = try await client.chatCompletion(
@@ -197,25 +273,28 @@ actor ResearcherAgent {
 
         let analysis = try JSONDecoder().decode(ResearcherAnalysis.self, from: data)
 
-        // Filter out already-researched topics
+        // Filter out already-attempted topics (case-insensitive)
         return analysis.topicsToResearch.filter { topic in
-            !researchedTopics.contains(topic.topic.lowercased())
+            let key = topic.topic.lowercased()
+            return !attemptedTopics.contains(key) && !successfulTopics.contains(key)
         }
     }
 
     private func researchTopic(_ topic: ResearcherAnalysis.TopicToResearch) async throws -> ResearchItem? {
-        // Use web search to research the topic
+        // Use model's knowledge to provide context (web search not available in Chat Completions API)
         let userPrompt = """
-        Research this topic and provide a concise summary that would help an interviewer ask better questions.
+        Provide helpful context about this topic that would help an interviewer ask better follow-up questions.
 
         Topic: \(topic.topic)
         Research Type: \(topic.kind)
-        Search Query: \(topic.searchQuery)
-        Why Useful: \(topic.whyUseful)
+        Context for why this is useful: \(topic.whyUseful)
 
-        Provide:
-        1. A brief factual summary (2-3 sentences)
-        2. How this information could be used to ask a better follow-up question
+        Based on your knowledge, provide:
+        1. A brief factual summary (2-3 sentences) - include specific facts, dates, or numbers if you know them
+        2. A specific follow-up question the interviewer could ask using this context
+
+        If you don't have reliable information about this topic, return a summary that acknowledges this
+        and suggest what the interviewer might ask to learn more from the expert.
         """
 
         let response = try await client.chatCompletion(
@@ -224,57 +303,63 @@ actor ResearcherAgent {
                 Message.user(userPrompt)
             ],
             model: "gpt-4o",
-            responseFormat: .jsonSchema(name: "research_result_schema", schema: Self.researchResultJsonSchema),
-            tools: [.webSearch(searchContextSize: "medium")]
+            responseFormat: .jsonSchema(name: "research_result_schema", schema: Self.researchResultJsonSchema)
         )
 
         guard let content = response.choices.first?.message.content,
               let data = content.data(using: .utf8) else {
-            return nil
+            throw OpenAIError.invalidResponse
         }
 
-        let result = try JSONDecoder().decode(ResearcherResponse.ResearchItemResponse.self, from: data)
-        return result.toResearchItem()
+        do {
+            let result = try JSONDecoder().decode(ResearcherResponse.ResearchItemResponse.self, from: data)
+            return result.toResearchItem()
+        } catch {
+            // Log decoding error for debugging
+            AgentLogger.researcherError(topic: topic.topic, error: "JSON decode failed: \(error.localizedDescription)")
+            throw error
+        }
     }
 
     // MARK: - System Prompts
 
     static let identifySystemPrompt = """
-    You are a sharp research assistant for a live interview. Your job is to fact-check, verify, and find context that makes the interview more rigorous.
+    You are a research assistant helping during a live interview. Your job is to identify SPECIFIC, CONCRETE topics that would benefit from additional context.
 
-    **BE SKEPTICAL** - When the expert makes claims, find data to verify or challenge them. Good interviews push back.
+    **IMPORTANT: Be VERY selective.** Only suggest topics when:
+    1. The expert mentioned a SPECIFIC name, company, product, framework, or technical term
+    2. The topic is genuinely unfamiliar or has nuances worth exploring
+    3. Providing context would help the interviewer ask a better follow-up question
 
-    **What to look for:**
+    **DO NOT suggest:**
+    - The main interview topic itself (e.g., if interviewing about "AI-native apps", don't suggest "AI-native applications")
+    - Generic or broad topics
+    - Things that are common knowledge
+    - Anything in the "Already Researched/Attempted" list
 
-    1. **Claims to Verify** - Expert says "most companies do X" or "studies show Y"? Find the actual data.
-    2. **Numbers to Check** - Percentages, growth rates, market sizes - are they accurate?
-    3. **Counterpoints** - Find opposing viewpoints, failed examples, or edge cases that complicate the narrative
-    4. **Definitions** - Technical terms, frameworks, methodologies the expert uses
-    5. **People & Companies** - Names mentioned - what's their actual track record?
-    6. **Historical Context** - Did things really happen the way the expert describes?
+    **ONLY suggest:**
+    - Specific company names the expert mentioned
+    - Specific people or researchers referenced
+    - Specific products, frameworks, or tools
+    - Technical terms or jargon that might need clarification
+    - Specific claims with numbers that could be verified
 
-    **Your job is to arm the interviewer with:**
-    - Facts that support OR contradict what the expert is saying
-    - Specific examples that illustrate or challenge their points
-    - Data points the interviewer can cite ("Actually, I read that...")
-    - Alternative perspectives worth raising
-
-    **Guidelines:**
-    - Don't assume the expert is right. Find out.
-    - If they cite a study, find it. If they name-drop, verify the connection.
-    - Look for the messy reality behind clean narratives
-    - Aim for 2-3 topics per segment
+    **Output:** Return 0-2 highly specific topics. If nothing concrete was mentioned, return an empty array. Quality over quantity.
     """
 
     static let researchSystemPrompt = """
-    You are a fact-checker with web search capability. Find the truth, not just confirmation.
+    You are a knowledgeable research assistant providing context during an interview.
+
+    **Your role:**
+    - Provide factual, useful context from your knowledge
+    - Help the interviewer ask informed follow-up questions
+    - Be honest about uncertainty - if you're not sure about something, say so
 
     **Guidelines:**
-    - Search for actual data, studies, and primary sources
-    - If the expert made a claim, find evidence for AND against it
-    - Note when common beliefs are wrong or more complicated than they seem
-    - Include specific numbers, dates, and names - vague summaries are useless
-    - If you can't verify something, say so
+    - Include specific facts, dates, numbers when you know them
+    - Suggest how this context could lead to a better question
+    - Keep summaries concise (2-3 sentences)
+    - If the topic is outside your knowledge, suggest what the interviewer might ask the expert
     """
 
     // MARK: - JSON Schemas

@@ -29,9 +29,15 @@ enum DraftStyle: String, CaseIterable, Codable {
     case standard
     case punchy
     case reflective
+    case zinsser
 
     var displayName: String {
-        rawValue.capitalized
+        switch self {
+        case .zinsser:
+            return "Zinsser"
+        default:
+            return rawValue.capitalized
+        }
     }
 
     var description: String {
@@ -42,6 +48,8 @@ enum DraftStyle: String, CaseIterable, Codable {
             return "Direct, energetic, shorter paragraphs"
         case .reflective:
             return "Thoughtful, introspective, more nuanced"
+        case .zinsser:
+            return "Clean, clear nonfiction (On Writing Well)"
         }
     }
 }

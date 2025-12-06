@@ -37,7 +37,7 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
     var state: InterviewState = .idle
     var transcript: [TranscriptEntry] = []
     var elapsedSeconds: Int = 0
-    var targetSeconds: Int = 600  // 10 minutes default
+    var targetSeconds: Int = 840  // 14 minutes default
     var currentQuestion: String = ""
     var isUserSpeaking = false
     var isAssistantSpeaking = false
@@ -76,7 +76,7 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
     private let agentProcessingInterval: TimeInterval = 10.0  // Process agents every 10 seconds
     private var planSnapshot: PlanSnapshot?  // Cached snapshot for agent processing
     private var delegatesConfigured = false
-    private var hasDetectedClosing = false  // Track if we've seen a closing statement
+    var hasDetectedClosing = false  // Track if we've seen a closing statement (public for UI)
     private var closingDetectedAt: Date?  // When closing was detected
 
     // Phrases that indicate the interview is ending
@@ -330,11 +330,36 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
             }
         }
 
+        // Build follow-up context if this is a continuation
+        var followUpSection = ""
+        if plan.isFollowUp && !plan.followUpContext.isEmpty {
+            followUpSection = """
+
+            **IMPORTANT: This is a FOLLOW-UP conversation.**
+
+            You already spoke with this person in a previous session. This is a continuation to explore new angles and add depth.
+
+            **Topics to explore in this follow-up:**
+            \(plan.followUpContext)
+
+            **Follow-up style:**
+            - Reference that you spoke before ("Last time we talked about...")
+            - Don't repeat ground already covered
+            - Go deeper on new angles
+            - Help them add richness to their eventual essay
+
+            """
+        }
+
+        let openingInstruction = plan.isFollowUp
+            ? "Start by warmly welcoming them back and briefly mention you're picking up where you left off. Then dive into the first follow-up topic."
+            : "Start by warmly greeting them in English and asking about the topic. Keep it natural and conversational."
+
         return """
         You are an expert podcast-style interviewer talking with a single expert.
 
         **IMPORTANT: Always speak and respond in English, regardless of any other language you may hear.**
-
+        \(followUpSection)
         **Research Goal:** \(plan.researchGoal)
 
         **Angle:** \(plan.angle)
@@ -357,11 +382,16 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
         - When they give a long answer, briefly mirror what you heard ("So it sounds like…") and then ask a focused follow-up
 
         **Time Budget:** \(plan.targetSeconds / 60) minutes total
-        - First 2-3 minutes: clarify context and stakes
+        - First 2-3 minutes: establish context and stakes
         - Middle: dive deep into stories and concrete examples
-        - Last 2-3 minutes: synthesize and ask for closing reflection
+        - Last 2 minutes: synthesize and ask for closing reflection
 
-        Start by warmly greeting them in English and asking about the topic. Keep it natural and conversational.
+        **Exploration Time:**
+        You have built-in flexibility for whimsical discovery. When an unexpected but fascinating thread emerges—a surprising connection, an intriguing tangent, a story begging to be told—follow it. These detours often yield the richest material.
+
+        Don't force exploration if nothing sparks. But when the conversation wants to meander somewhere interesting, let it breathe. The best essays come from conversations that found unexpected corners.
+
+        \(openingInstruction)
         """
     }
 
@@ -410,10 +440,16 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
 
     nonisolated func realtimeClientDidDisconnect(_ client: RealtimeClient, error: Error?) async {
         await MainActor.run {
+            // Only set error if it's a real error (not expected disconnection)
             if let error = error {
-                self.errorMessage = error.localizedDescription
+                // Don't show error if we're ending normally
+                if self.state != .ending && self.state != .ended && !self.hasDetectedClosing {
+                    self.errorMessage = error.localizedDescription
+                }
             }
-            if self.state == .active {
+            // Only reset to idle if we were active and it's an unexpected disconnect
+            // Don't overwrite .ending or .ended states
+            if self.state == .active && !self.hasDetectedClosing {
                 self.state = .idle
             }
         }
@@ -610,26 +646,38 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
                 hasDetectedClosing = true
                 closingDetectedAt = Date()
 
-                // Schedule automatic end after a brief delay (let the audio finish)
+                // Immediately stop audio and connection - no more input/output
                 Task {
-                    try? await Task.sleep(for: .seconds(3))
-                    await self.autoEndIfStillClosing()
+                    await self.stopAudioAndConnection()
                 }
                 break
             }
         }
     }
 
-    private func autoEndIfStillClosing() async {
-        // Only auto-end if we're still in active state and closing was detected
-        guard state == .active, hasDetectedClosing else { return }
+    /// Stop audio capture and realtime connection immediately (called when closing detected)
+    private func stopAudioAndConnection() async {
+        NSLog("[InterviewSession] 🛑 Stopping audio and connection after closing")
+        NSLog("[InterviewSession] 📊 Transcript contains %d entries before stopping", transcript.count)
 
-        // Check that it's been at least 2 seconds since closing was detected
-        if let closingTime = closingDetectedAt,
-           Date().timeIntervalSince(closingTime) >= 2.0 {
-            NSLog("[InterviewSession] 🎬 Auto-ending interview after closing statement")
-            await endSession()
-        }
+        // Stop all audio
+        audioEngine.stopCapturing()
+        audioEngine.stopPlayback()
+
+        // Disconnect from realtime API
+        await realtimeClient.disconnect()
+
+        // Stop all timers
+        stopTimer()
+
+        // Update state
+        isAssistantSpeaking = false
+        isUserSpeaking = false
+
+        // CRITICAL: Set state to .ended so the UI shows the ended screen and data gets saved
+        // This triggers the onChange handler in InterviewView that calls saveSessionAfterAutoEnd()
+        state = .ended
+        NSLog("[InterviewSession] ✅ Session state set to .ended - ready for data save")
     }
 }
 

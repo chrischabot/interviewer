@@ -9,6 +9,7 @@ enum NavigationDestination: Hashable {
     case interview(planId: UUID)
     case analysis(sessionId: UUID)
     case draft(sessionId: UUID)
+    case followUp(sessionId: UUID)  // Continue a previous session
     case settings
 }
 

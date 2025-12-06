@@ -10,6 +10,11 @@ final class Plan {
     var targetSeconds: Int
     var createdAt: Date
 
+    // Follow-up support
+    var isFollowUp: Bool = false
+    var previousSessionId: UUID?  // The session this is a follow-up to
+    var followUpContext: String = ""  // Summary of what to explore further
+
     @Relationship(deleteRule: .cascade, inverse: \Section.plan)
     var sections: [Section] = []
 
@@ -19,7 +24,10 @@ final class Plan {
         researchGoal: String,
         angle: String,
         targetSeconds: Int,
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        isFollowUp: Bool = false,
+        previousSessionId: UUID? = nil,
+        followUpContext: String = ""
     ) {
         self.id = id
         self.topic = topic
@@ -27,6 +35,9 @@ final class Plan {
         self.angle = angle
         self.targetSeconds = targetSeconds
         self.createdAt = createdAt
+        self.isFollowUp = isFollowUp
+        self.previousSessionId = previousSessionId
+        self.followUpContext = followUpContext
     }
 }
 

@@ -281,12 +281,26 @@ struct DraftView: View {
                 )
             }
 
+            // Check if this is a follow-up session and get previous transcript
+            var previousTranscript: [TranscriptEntry]? = nil
+            if plan.isFollowUp, let previousSessionId = plan.previousSessionId {
+                previousTranscript = await fetchPreviousTranscript(sessionId: previousSessionId)
+                if let prev = previousTranscript {
+                    NSLog("[DraftView] 📎 Found previous transcript with %d entries for combined essay", prev.count)
+                } else {
+                    NSLog("[DraftView] ⚠️ Follow-up plan but no previous transcript found for session: %@", previousSessionId.uuidString)
+                }
+            } else if plan.isFollowUp {
+                NSLog("[DraftView] ⚠️ Follow-up plan but previousSessionId is nil")
+            }
+
             // Generate draft
             let markdown = try await AgentCoordinator.shared.writeDraft(
                 transcript: transcript,
                 analysis: analysis,
                 plan: plan.toSnapshot(),
-                style: appState.selectedDraftStyle
+                style: appState.selectedDraftStyle,
+                previousTranscript: previousTranscript
             )
 
             // Save to SwiftData
@@ -325,6 +339,35 @@ struct DraftView: View {
             suggestedTitle: model.suggestedTitle,
             suggestedSubtitle: model.suggestedSubtitle
         )
+    }
+
+    private func fetchPreviousTranscript(sessionId: UUID) async -> [TranscriptEntry]? {
+        // Fetch the previous session from SwiftData
+        let descriptor = FetchDescriptor<InterviewSession>(
+            predicate: #Predicate { $0.id == sessionId }
+        )
+
+        do {
+            let sessions = try modelContext.fetch(descriptor)
+            guard let previousSession = sessions.first else {
+                NSLog("[DraftView] ⚠️ Previous session not found: %@", sessionId.uuidString)
+                return nil
+            }
+
+            return previousSession.utterances
+                .sorted { $0.timestamp < $1.timestamp }
+                .map { utterance in
+                    TranscriptEntry(
+                        speaker: utterance.speaker,
+                        text: utterance.text,
+                        timestamp: utterance.timestamp,
+                        isFinal: true
+                    )
+                }
+        } catch {
+            NSLog("[DraftView] ⚠️ Failed to fetch previous session: %@", error.localizedDescription)
+            return nil
+        }
     }
 }
 
