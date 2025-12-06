@@ -121,6 +121,24 @@ extension MockOpenAIClient: LLMClient, @unchecked Sendable {
         )
         return response.choices.first?.message.content ?? ""
     }
+
+    func chatTextStreaming(
+        messages: [Message],
+        model: String,
+        maxTokens: Int?
+    ) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    let text = try await chatText(messages: messages, model: model, maxTokens: maxTokens)
+                    continuation.yield(text)
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
 }
 
 // MARK: - ResponseFormat Extension

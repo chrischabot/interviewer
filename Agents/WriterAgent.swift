@@ -140,6 +140,115 @@ actor WriterAgent {
         return writerResponse.markdown
     }
 
+    /// Stream a blog post draft from analysis, yielding markdown chunks as they arrive
+    /// - Parameters:
+    ///   - transcript: Current session transcript
+    ///   - analysis: Analysis summary
+    ///   - plan: The interview plan
+    ///   - style: Writing style
+    ///   - previousTranscript: Optional transcript from a previous session (for follow-ups)
+    func writeDraftStreaming(
+        transcript: [TranscriptEntry],
+        analysis: AnalysisSummary,
+        plan: PlanSnapshot,
+        style: DraftStyle = .standard,
+        previousTranscript: [TranscriptEntry]? = nil
+    ) -> AsyncThrowingStream<String, Error> {
+        lastActivityTime = Date()
+
+        AgentLogger.writerStarted(style: style.displayName)
+
+        // Build full transcript for reference
+        var transcriptText = ""
+
+        if let previous = previousTranscript, !previous.isEmpty {
+            let previousText = previous.map { entry in
+                let speaker = entry.speaker == "assistant" ? "Interviewer" : "Author"
+                return "[\(speaker)]: \(entry.text)"
+            }.joined(separator: "\n\n")
+
+            transcriptText = """
+            ### Original Conversation
+            \(previousText)
+
+            ---
+
+            ### Follow-Up Conversation
+            """
+        }
+
+        let currentText = transcript.map { entry in
+            let speaker = entry.speaker == "assistant" ? "Interviewer" : "Author"
+            return "[\(speaker)]: \(entry.text)"
+        }.joined(separator: "\n\n")
+
+        transcriptText += currentText
+
+        let analysisSummary = buildAnalysisSummary(analysis)
+
+        let userPrompt = """
+        ## Interview Context
+
+        **Topic:** \(plan.topic)
+        **Research Goal:** \(plan.researchGoal)
+        **Angle:** \(plan.angle)
+
+        ## Analysis Summary
+        \(analysisSummary)
+
+        ## Full Transcript (for reference - the Author's actual words and phrasings)
+        \(transcriptText)
+
+        ---
+
+        **CRITICAL: This is the AUTHOR'S personal blog.**
+
+        The person labeled "Author" in the transcript is writing this essay to share THEIR OWN experiences and insights with the world. This is NOT a journalist writing about "an expert" - this IS the expert, speaking directly to their readers in first person.
+
+        Write as if you ARE the author, sharing YOUR thoughts, YOUR experiences, YOUR hard-won insights.
+
+        **Style:** \(style.rawValue)
+        \(styleGuidance(for: style))
+
+        **Hard constraints (apply in every style):**
+        - No em dashes or double hyphens; use commas or periods instead.
+        - No overly formal or neutral tone; keep it warm and human.
+        - Vary sentence length and rhythm; avoid repetitive cadence.
+        - Avoid signposting and empty summaries (e.g., "In conclusion," "It's important to note").
+        - Avoid "AI-sounding" vocabulary like "delve," "crucial/vital," "tapestry," "ever-evolving/dynamic," "it's important to note/remember/consider," "a stark reminder."
+
+        **Requirements:**
+
+        1. **Use first person throughout** - "I learned...", "In my experience...", "Here's what I discovered..."
+        2. **Use the suggested title** "\(analysis.suggestedTitle)" (or improve it)
+        3. **Open with a hook** - A surprising insight, a vivid scene, or a provocative question
+        4. **Preserve the author's voice** - Use their vocabulary, their turns of phrase, their way of building arguments
+        5. **Structure around main claims** - Each major point should have supporting stories/evidence from the transcript
+        6. **Acknowledge tensions** - Where nuance was expressed, reflect that complexity
+        7. **End with resonance** - A call to action or reflection that lingers
+
+        Output the essay as clean markdown with:
+        - # for the main title
+        - ## for section headers
+        - > for pull quotes (the author's own memorable lines, formatted for emphasis)
+        - *italics* for emphasis
+        - --- for section breaks if needed
+
+        Target length: 1200-2000 words (adjust based on content richness)
+
+        Output ONLY the markdown essay. Do not include any JSON wrapper or metadata.
+        """
+
+        return llm.chatTextStreaming(
+            messages: [
+                Message.system(systemPrompt(for: style)),
+                Message.user(userPrompt)
+            ],
+            model: modelConfig.insightModel,
+            maxTokens: nil
+        )
+    }
+
     /// Activity score for UI meters (0-1 based on recency)
     func getActivityScore() -> Double {
         guard let lastActivity = lastActivityTime else { return 0.0 }

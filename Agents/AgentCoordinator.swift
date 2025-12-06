@@ -827,6 +827,47 @@ actor AgentCoordinator {
             previousTranscript: previousTranscript
         )
     }
+
+    /// Stream a draft essay from analysis, yielding markdown chunks as they arrive
+    /// - Parameters:
+    ///   - transcript: Current session transcript
+    ///   - analysis: Analysis summary
+    ///   - plan: The interview plan
+    ///   - style: Writing style
+    ///   - previousTranscript: Optional transcript from previous session (for follow-ups)
+    func writeDraftStreaming(
+        transcript: [TranscriptEntry],
+        analysis: AnalysisSummary,
+        plan: PlanSnapshot,
+        style: DraftStyle,
+        previousTranscript: [TranscriptEntry]? = nil
+    ) -> AsyncThrowingStream<String, Error> {
+        updateActivity(agent: "writer", score: 1.0)
+
+        return AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    let stream = await writerAgent.writeDraftStreaming(
+                        transcript: transcript,
+                        analysis: analysis,
+                        plan: plan,
+                        style: style,
+                        previousTranscript: previousTranscript
+                    )
+
+                    for try await chunk in stream {
+                        continuation.yield(chunk)
+                    }
+
+                    updateActivity(agent: "writer", score: 0.5)
+                    continuation.finish()
+                } catch {
+                    updateActivity(agent: "writer", score: 0.0)
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
 }
 
 // MARK: - Plan Conversion Helpers

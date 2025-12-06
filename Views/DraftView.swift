@@ -50,6 +50,7 @@ struct DraftView: View {
     @State private var markdownContent: String = ""
     @State private var currentError: AppError?
     @State private var showCopiedFeedback = false
+    @State private var isStreaming = false
 
     private var session: InterviewSession? {
         sessions.first { $0.id == sessionId }
@@ -114,8 +115,15 @@ struct DraftView: View {
     @ViewBuilder
     private func draftContent(_ session: InterviewSession) -> some View {
         switch stage {
-        case .idle, .loading, .generating:
+        case .idle, .loading:
             processingView
+        case .generating:
+            // Show streaming content as it arrives
+            if markdownContent.isEmpty {
+                processingView
+            } else {
+                streamingDraftView(session)
+            }
         case .complete:
             completeDraftView(session)
         case .error:

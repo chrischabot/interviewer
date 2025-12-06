@@ -264,6 +264,32 @@ struct OpenAIErrorResponse: Codable {
     }
 }
 
+/// Streaming response chunk from OpenAI
+struct StreamChunk: Codable {
+    let id: String
+    let object: String
+    let created: Int
+    let model: String
+    let choices: [StreamChoice]
+
+    struct StreamChoice: Codable {
+        let index: Int
+        let delta: Delta
+        let finishReason: String?
+
+        enum CodingKeys: String, CodingKey {
+            case index
+            case delta
+            case finishReason = "finish_reason"
+        }
+    }
+
+    struct Delta: Codable {
+        let role: String?
+        let content: String?
+    }
+}
+
 // MARK: - AnyCodable Helper
 
 struct AnyCodable: Codable {
@@ -347,7 +373,7 @@ actor OpenAIClient {
     // MARK: - API Key
 
     private func getAPIKey() async throws -> String {
-        guard let key = try await KeychainManager.shared.retrieveAPIKey() else {
+        guard let key = try await KeychainManager.shared.currentOpenAIKey() else {
             throw OpenAIError.noAPIKey
         }
         return key
@@ -511,6 +537,92 @@ actor OpenAIClient {
             return try JSONDecoder().decode(T.self, from: data)
         } catch {
             throw OpenAIError.decodingError(error)
+        }
+    }
+
+    // MARK: - Streaming Chat Completions
+
+    /// Stream chat completion responses, yielding text chunks as they arrive
+    func chatCompletionStreaming(
+        messages: [Message],
+        model: String = "gpt-4o",
+        maxTokens: Int? = nil
+    ) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    let apiKey = try await getAPIKey()
+
+                    guard let url = URL(string: "\(baseURL)/chat/completions") else {
+                        continuation.finish(throwing: OpenAIError.invalidURL)
+                        return
+                    }
+
+                    var request = URLRequest(url: url)
+                    request.httpMethod = "POST"
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
+                    // Build request with stream: true
+                    var bodyDict: [String: Any] = [
+                        "model": model,
+                        "messages": messages.map { ["role": $0.role, "content": $0.content] },
+                        "stream": true
+                    ]
+                    if let maxTokens {
+                        bodyDict["max_tokens"] = maxTokens
+                    }
+
+                    request.httpBody = try JSONSerialization.data(withJSONObject: bodyDict)
+
+                    log("POST /chat/completions (streaming) model=\(model)")
+
+                    let (bytes, response) = try await session.bytes(for: request)
+
+                    guard let httpResponse = response as? HTTPURLResponse else {
+                        continuation.finish(throwing: OpenAIError.invalidResponse)
+                        return
+                    }
+
+                    if httpResponse.statusCode != 200 {
+                        // Collect error response
+                        var errorData = Data()
+                        for try await byte in bytes {
+                            errorData.append(byte)
+                        }
+                        let errorMessage = String(data: errorData, encoding: .utf8)
+                        continuation.finish(throwing: OpenAIError.httpError(statusCode: httpResponse.statusCode, message: errorMessage))
+                        return
+                    }
+
+                    // Parse SSE stream
+                    for try await line in bytes.lines {
+                        // SSE format: "data: {...}"
+                        guard line.hasPrefix("data: ") else { continue }
+
+                        let jsonString = String(line.dropFirst(6))
+
+                        // Stream ends with "data: [DONE]"
+                        if jsonString == "[DONE]" {
+                            break
+                        }
+
+                        // Parse the chunk
+                        guard let data = jsonString.data(using: .utf8),
+                              let chunk = try? JSONDecoder().decode(StreamChunk.self, from: data),
+                              let delta = chunk.choices.first?.delta,
+                              let content = delta.content else {
+                            continue
+                        }
+
+                        continuation.yield(content)
+                    }
+
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
         }
     }
 

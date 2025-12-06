@@ -62,8 +62,10 @@ final class AppState {
         defer { isCheckingAPIKey = false }
 
         // Load from keychain
-        openAIKeyCached = try? await KeychainManager.shared.retrieveAPIKey()
-        anthropicKeyCached = try? await KeychainManager.shared.retrieveAnthropicKey()
+        if let keys = try? await KeychainManager.shared.loadAllKeys() {
+            openAIKeyCached = keys.openAI
+            anthropicKeyCached = keys.anthropic
+        }
 
         // If missing, try environment prefill
         if openAIKeyCached == nil, let envKey = ProcessInfo.processInfo.environment["OPENAI_API_KEY"], !envKey.isEmpty {

@@ -1470,7 +1470,7 @@ struct RecentConversationRow: View {
     let plan: Plan
     let hasCompletedSession: Bool
     let onResume: () -> Void
-    let onDraft: () -> Void
+    let onAnalysis: () -> Void
     let onFresh: () -> Void
 
     var body: some View {
@@ -1495,17 +1495,17 @@ struct RecentConversationRow: View {
             .disabled(!hasCompletedSession)
             .opacity(hasCompletedSession ? 1.0 : 0.3)
 
-            // Draft button - jump to draft view (debug)
+            // Analysis button - jump to analysis view
             Button {
-                onDraft()
+                onAnalysis()
             } label: {
                 Image(systemName: "doc.richtext")
                     .font(.title3)
                     .foregroundStyle(.blue)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("View draft")
-            .accessibilityHint("Jump directly to the draft screen for this conversation")
+            .accessibilityLabel("View analysis")
+            .accessibilityHint("Jump to the analysis screen with key points, tensions, and writing style selection")
             .disabled(!hasCompletedSession)
             .opacity(hasCompletedSession ? 1.0 : 0.3)
 

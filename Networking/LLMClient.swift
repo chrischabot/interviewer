@@ -15,6 +15,12 @@ protocol LLMClient: Sendable {
         model: String,
         maxTokens: Int?
     ) async throws -> String
+
+    func chatTextStreaming(
+        messages: [Message],
+        model: String,
+        maxTokens: Int?
+    ) -> AsyncThrowingStream<String, Error>
 }
 
 final class OpenAIAdapter: LLMClient, @unchecked Sendable {
@@ -77,6 +83,33 @@ final class OpenAIAdapter: LLMClient, @unchecked Sendable {
         }
         return content
     }
+
+    func chatTextStreaming(
+        messages: [Message],
+        model: String,
+        maxTokens: Int?
+    ) -> AsyncThrowingStream<String, Error> {
+        log("Streaming text chat request model=\(model) messages=\(messages.count)")
+
+        return AsyncThrowingStream { continuation in
+            Task {
+                let stream = await client.chatCompletionStreaming(
+                    messages: messages,
+                    model: model,
+                    maxTokens: maxTokens
+                )
+
+                do {
+                    for try await chunk in stream {
+                        continuation.yield(chunk)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
 }
 
 final class AnthropicAdapter: LLMClient, @unchecked Sendable {
@@ -128,6 +161,27 @@ final class AnthropicAdapter: LLMClient, @unchecked Sendable {
         } catch {
             log("Anthropic text error: \(error.localizedDescription)")
             throw error
+        }
+    }
+
+    func chatTextStreaming(
+        messages: [Message],
+        model: String,
+        maxTokens: Int?
+    ) -> AsyncThrowingStream<String, Error> {
+        // Anthropic streaming fallback: yield full text in one chunk for now
+        log("Streaming text chat request model=\(model) messages=\(messages.count)")
+
+        return AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    let text = try await chatText(messages: messages, model: model, maxTokens: maxTokens)
+                    continuation.yield(text)
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
         }
     }
 }
