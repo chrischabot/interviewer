@@ -12,6 +12,17 @@ This application proposes a remedy.
 
 The result? A conversation that feels remarkably like speaking with an old friend who happens to be deeply curious about precisely the right things.
 
+---
+
+## Installation
+
+1. [Download Interviewer.dmg](https://github.com/chrischabot/interviewer/releases/latest/download/Interviewer.dmg)
+2. Open the DMG and drag Interviewer to Applications
+3. Launch and enter your OpenAI API key in Settings
+4. Choose a topic and start speaking
+
+---
+
 ![Conversation](images/conversation.png)
 
 ![Planning](images/planning.png)
