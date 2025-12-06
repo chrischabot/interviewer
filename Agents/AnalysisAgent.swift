@@ -214,8 +214,8 @@ actor AnalysisAgent {
     private func normalizeQuote(_ text: String) -> String {
         text.lowercased()
             .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "\"", with: "")
-            .replacingOccurrences(of: "'", with: "")
+            .replacing("\"", with: "")
+            .replacing("'", with: "")
     }
 
     /// Simple text similarity using word overlap

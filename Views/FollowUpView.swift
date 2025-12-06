@@ -104,7 +104,7 @@ struct FollowUpView: View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Continue the Conversation", systemImage: "bubble.left.and.bubble.right")
                 .font(.title2)
-                .fontWeight(.bold)
+                .bold()
 
             Text(analysis.summary)
                 .font(.body)

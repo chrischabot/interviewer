@@ -66,12 +66,8 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
     private var pendingUserText: String = ""  // Accumulate user transcript during speech
     private var lastAssistantAudioAt: Date?  // Track when last AI audio chunk was received
     private let audioBleedGuardSeconds: TimeInterval = 2.0  // Delay after last audio chunk before resuming mic
-    var isMicMuted: Bool { isAssistantSpeaking || isInBleedGuardPeriod }  // Exposed for UI
-
-    private var isInBleedGuardPeriod: Bool {
-        guard let lastAudioAt = lastAssistantAudioAt else { return false }
-        return Date().timeIntervalSince(lastAudioAt) < audioBleedGuardSeconds
-    }
+    var isMicMuted: Bool = false  // Exposed for UI - stored property so SwiftUI can observe changes
+    private var bleedGuardTimer: Timer?  // Timer to clear mic mute after bleed guard period
     private var hasSentAudioSinceLastResponse = false  // Track if we've sent audio (to avoid empty buffer error)
     private let agentProcessingInterval: TimeInterval = 10.0  // Process agents every 10 seconds
     private var planSnapshot: PlanSnapshot?  // Cached snapshot for agent processing
@@ -106,6 +102,24 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
         StructuredLogger.log(component: component, message: message)
     }
 
+    /// Updates mic mute state based on assistant speaking and schedules timer for bleed guard
+    private func updateMicMuteState() {
+        bleedGuardTimer?.invalidate()
+        bleedGuardTimer = nil
+
+        if isAssistantSpeaking {
+            isMicMuted = true
+        } else {
+            // Start bleed guard timer - mic stays muted for a bit after assistant stops
+            isMicMuted = true
+            bleedGuardTimer = Timer.scheduledTimer(withTimeInterval: audioBleedGuardSeconds, repeats: false) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.isMicMuted = false
+                }
+            }
+        }
+    }
+
     private func ensureDelegatesConfigured() async {
         guard !delegatesConfigured else { return }
         await realtimeClient.setDelegate(self)
@@ -127,6 +141,7 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
         self.errorMessage = nil
         self.isAssistantSpeaking = true  // AI will start speaking immediately with greeting
         self.isUserSpeaking = false
+        self.isMicMuted = true  // Mic starts muted until AI finishes speaking
         self.lastAssistantAudioAt = Date()  // Pretend we just received audio to block mic initially
         self.pendingAssistantText = ""
         self.pendingUserText = ""
@@ -245,6 +260,9 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
         state = .ending
 
         stopTimer()
+        bleedGuardTimer?.invalidate()
+        bleedGuardTimer = nil
+        isMicMuted = false
         audioEngine.shutdown()  // Fully stop audio engine when ending (not just pausing)
         await realtimeClient.disconnect()
 
@@ -541,6 +559,9 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
         let wasAlreadySpeaking = await MainActor.run {
             let was = self.isAssistantSpeaking
             self.isAssistantSpeaking = true
+            self.isMicMuted = true  // Keep mic muted while receiving audio
+            self.bleedGuardTimer?.invalidate()  // Cancel any pending unmute
+            self.bleedGuardTimer = nil
             self.lastAssistantAudioAt = Date()  // Track when each audio chunk arrives
             return was
         }
@@ -581,6 +602,7 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
                     // Reset speaking state
                     self.pendingAssistantText = ""
                     self.isAssistantSpeaking = false
+                    self.updateMicMuteState()  // Start bleed guard timer
 
                     // Check for closing statement
                     self.checkForClosingStatement(text)

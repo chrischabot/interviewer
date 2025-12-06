@@ -685,7 +685,7 @@ struct PlanEditorView: View {
 
             Text(plan.topic)
                 .font(.title2)
-                .fontWeight(.bold)
+                .bold()
         }
     }
 
@@ -1221,7 +1221,8 @@ struct InterviewView: View {
     }
 
     private func scrollToBottom(proxy: ScrollViewProxy) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+        Task {
+            try? await Task.sleep(for: .milliseconds(50))
             withAnimation(.easeOut(duration: 0.2)) {
                 proxy.scrollTo("transcript-bottom-anchor", anchor: .bottom)
             }

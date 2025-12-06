@@ -183,7 +183,7 @@ struct AnalysisView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(analysis.suggestedTitle)
                 .font(.title)
-                .fontWeight(.bold)
+                .bold()
 
             if !analysis.suggestedSubtitle.isEmpty {
                 Text(analysis.suggestedSubtitle)
@@ -296,7 +296,7 @@ struct AnalysisView: View {
                     }
                     .padding()
                     .background(Color.primary.opacity(0.03))
-                    .cornerRadius(8)
+                    .clipShape(.rect(cornerRadius: 8))
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

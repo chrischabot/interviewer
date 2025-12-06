@@ -345,7 +345,8 @@ struct DraftView: View {
         #endif
 
         showCopiedFeedback = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+        Task {
+            try? await Task.sleep(for: .seconds(2))
             showCopiedFeedback = false
         }
     }
@@ -589,7 +590,7 @@ struct MarkdownView: View {
         case .h1(let text):
             Text(text)
                 .font(.title)
-                .fontWeight(.bold)
+                .bold()
                 .padding(.top, 8)
 
         case .h2(let text):
@@ -634,7 +635,7 @@ struct MarkdownView: View {
 
         // Bold: **text**
         if let boldRange = text.range(of: "\\*\\*(.+?)\\*\\*", options: .regularExpression) {
-            let inner = String(text[boldRange]).replacingOccurrences(of: "**", with: "")
+            let inner = String(text[boldRange]).replacing("**", with: "")
             if let attrRange = result.range(of: text[boldRange]) {
                 result.replaceSubrange(attrRange, with: AttributedString(inner))
             }
@@ -642,7 +643,7 @@ struct MarkdownView: View {
 
         // Italic: *text* (simple approach)
         if let italicRange = text.range(of: "(?<!\\*)\\*([^*]+)\\*(?!\\*)", options: .regularExpression) {
-            let inner = String(text[italicRange]).replacingOccurrences(of: "*", with: "")
+            let inner = String(text[italicRange]).replacing("*", with: "")
             if let attrRange = result.range(of: text[italicRange]) {
                 var replacement = AttributedString(inner)
                 replacement.inlinePresentationIntent = .emphasized
