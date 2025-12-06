@@ -12,6 +12,12 @@ This application proposes a remedy.
 
 The result? A conversation that feels remarkably like speaking with an old friend who happens to be deeply curious about precisely the right things.
 
+![Conversation](images/conversation.png)
+
+![Planning](images/planning.png)
+
+![Application](images/application.png)
+
 ---
 
 ## The Art of Drawing Out What You Didn't Know You Knew
