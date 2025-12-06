@@ -882,15 +882,14 @@ struct TimeStepper: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Button {
+            Button("Decrease", systemImage: "minus") {
                 if seconds > 60 {
                     seconds -= 60
                 }
-            } label: {
-                Image(systemName: "minus")
-                    .font(.caption.weight(.semibold))
-                    .frame(width: 24, height: 24)
             }
+            .labelStyle(.iconOnly)
+            .font(.caption.weight(.semibold))
+            .frame(width: 24, height: 24)
             .buttonStyle(.bordered)
             .controlSize(.small)
 
@@ -900,13 +899,12 @@ struct TimeStepper: View {
                 .monospacedDigit()
                 .frame(minWidth: 28)
 
-            Button {
+            Button("Increase", systemImage: "plus") {
                 seconds += 60
-            } label: {
-                Image(systemName: "plus")
-                    .font(.caption.weight(.semibold))
-                    .frame(width: 24, height: 24)
             }
+            .labelStyle(.iconOnly)
+            .font(.caption.weight(.semibold))
+            .frame(width: 24, height: 24)
             .buttonStyle(.bordered)
             .controlSize(.small)
         }
@@ -1044,18 +1042,25 @@ struct InterviewView: View {
     private func interviewContent(_ plan: Plan) -> some View {
         VStack(spacing: 0) {
             // Timer header
-            timerHeader
+            InterviewTimerHeader(
+                topic: plan.topic,
+                formattedCountdownTime: sessionManager.formattedCountdownTime,
+                isOvertime: sessionManager.isOvertime,
+                assistantAudioLevel: CGFloat(sessionManager.assistantAudioLevel),
+                isAssistantSpeaking: sessionManager.isAssistantSpeaking,
+                isUserSpeaking: sessionManager.isUserSpeaking
+            )
 
             Divider()
 
             // Main content
             switch sessionManager.state {
             case .idle, .connecting:
-                connectingScreen
+                InterviewConnectingScreen()
             case .active, .paused:
                 activeInterviewView
             case .ending:
-                endingScreen
+                InterviewEndingScreen()
             case .ended:
                 endedScreen
             }
@@ -1124,61 +1129,6 @@ struct InterviewView: View {
         }
     }
 
-    // MARK: - Timer Header
-
-    private var timerHeader: some View {
-        GlassToolbar {
-            HStack(spacing: 12) {
-                // Voice orb - shows AI state
-                VoiceOrbView(
-                    audioLevel: sessionManager.assistantAudioLevel,
-                    isActive: sessionManager.isAssistantSpeaking,
-                    isListening: sessionManager.isUserSpeaking
-                )
-
-                // Topic title
-                if let topic = plan?.topic {
-                    Text(topic)
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                }
-
-                Spacer()
-
-                // Countdown timer
-                Text(sessionManager.formattedCountdownTime)
-                    .font(.system(.title2, design: .monospaced))
-                    .fontWeight(.medium)
-                    .foregroundStyle(sessionManager.isOvertime ? .red : .primary)
-                    .accessibilityLabel("Time remaining")
-                    .accessibilityValue(sessionManager.isOvertime ? "Overtime by \(sessionManager.formattedCountdownTime)" : "\(sessionManager.formattedCountdownTime) remaining")
-            }
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Interview status")
-    }
-
-    // MARK: - Connecting Screen
-
-    private var connectingScreen: some View {
-        VStack(spacing: 20) {
-            Spacer()
-
-            ProgressView()
-                .scaleEffect(1.5)
-
-            Text("Connecting...")
-                .font(.headline)
-
-            Text("Setting up your interview session")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            Spacer()
-        }
-    }
-
     // MARK: - Active Interview
 
     private var activeInterviewView: some View {
@@ -1216,7 +1166,17 @@ struct InterviewView: View {
             Divider()
 
             // Controls
-            interviewControls
+            InterviewControlsView(
+                isMicMuted: sessionManager.isMicMuted,
+                isUserSpeaking: sessionManager.isUserSpeaking,
+                isPaused: sessionManager.state == .paused
+            ) {
+                if sessionManager.state == .active {
+                    await sessionManager.pauseSession()
+                } else {
+                    await sessionManager.resumeSession()
+                }
+            }
         }
     }
 
@@ -1226,59 +1186,6 @@ struct InterviewView: View {
             withAnimation(.easeOut(duration: 0.2)) {
                 proxy.scrollTo("transcript-bottom-anchor", anchor: .bottom)
             }
-        }
-    }
-
-    private var interviewControls: some View {
-        GlassToolbar {
-            HStack(spacing: 16) {
-                // Status indicator - Yellow when mic is muted, Green when listening
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(sessionManager.isMicMuted ? Color.yellow : Color.green)
-                        .frame(width: 10, height: 10)
-                        .accessibilityHidden(true)
-                    Text(sessionManager.isMicMuted ? "Mic Off" : (sessionManager.isUserSpeaking ? "Listening..." : "Ready"))
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("Microphone status")
-                .accessibilityValue(sessionManager.isMicMuted ? "Microphone is muted" : (sessionManager.isUserSpeaking ? "Listening to you" : "Ready to listen"))
-
-                Spacer()
-
-                // Pause/Resume button
-                Button {
-                    Task {
-                        if sessionManager.state == .active {
-                            await sessionManager.pauseSession()
-                        } else {
-                            await sessionManager.resumeSession()
-                        }
-                    }
-                } label: {
-                    Image(systemName: sessionManager.state == .paused ? "play.fill" : "pause.fill")
-                        .font(.title3)
-                }
-                .buttonStyle(.bordered)
-            }
-        }
-    }
-
-    // MARK: - Ending Screen
-
-    private var endingScreen: some View {
-        VStack(spacing: 20) {
-            Spacer()
-
-            ProgressView()
-                .scaleEffect(1.5)
-
-            Text("Ending Session...")
-                .font(.headline)
-
-            Spacer()
         }
     }
 
@@ -1378,6 +1285,129 @@ struct InterviewView: View {
                 await AgentCoordinator.shared.storeNotes(sessionManager.currentNotes)
             }
             appState.navigate(to: .analysis(sessionId: session.id))
+        }
+    }
+}
+
+// MARK: - Interview Connecting Screen
+
+struct InterviewConnectingScreen: View {
+    var body: some View {
+        VStack(spacing: 20) {
+            Spacer()
+
+            ProgressView()
+                .scaleEffect(1.5)
+
+            Text("Connecting...")
+                .font(.headline)
+
+            Text("Setting up your interview session")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            Spacer()
+        }
+    }
+}
+
+// MARK: - Interview Ending Screen
+
+struct InterviewEndingScreen: View {
+    var body: some View {
+        VStack(spacing: 20) {
+            Spacer()
+
+            ProgressView()
+                .scaleEffect(1.5)
+
+            Text("Ending Session...")
+                .font(.headline)
+
+            Spacer()
+        }
+    }
+}
+
+// MARK: - Interview Timer Header
+
+struct InterviewTimerHeader: View {
+    let topic: String?
+    let formattedCountdownTime: String
+    let isOvertime: Bool
+    let assistantAudioLevel: CGFloat
+    let isAssistantSpeaking: Bool
+    let isUserSpeaking: Bool
+
+    var body: some View {
+        GlassToolbar {
+            HStack(spacing: 12) {
+                VoiceOrbView(
+                    audioLevel: assistantAudioLevel,
+                    isActive: isAssistantSpeaking,
+                    isListening: isUserSpeaking
+                )
+
+                if let topic {
+                    Text(topic)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                Text(formattedCountdownTime)
+                    .font(.system(.title2, design: .monospaced))
+                    .fontWeight(.medium)
+                    .foregroundStyle(isOvertime ? .red : .primary)
+                    .accessibilityLabel("Time remaining")
+                    .accessibilityValue(isOvertime ? "Overtime by \(formattedCountdownTime)" : "\(formattedCountdownTime) remaining")
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Interview status")
+    }
+}
+
+// MARK: - Interview Controls
+
+struct InterviewControlsView: View {
+    let isMicMuted: Bool
+    let isUserSpeaking: Bool
+    let isPaused: Bool
+    let onTogglePause: () async -> Void
+
+    var body: some View {
+        GlassToolbar {
+            HStack(spacing: 16) {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(isMicMuted ? Color.yellow : Color.green)
+                        .frame(width: 10, height: 10)
+                        .accessibilityHidden(true)
+                    Text(isMicMuted ? "Mic Off" : (isUserSpeaking ? "Listening..." : "Ready"))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Microphone status")
+                .accessibilityValue(isMicMuted ? "Microphone is muted" : (isUserSpeaking ? "Listening to you" : "Ready to listen"))
+
+                Spacer()
+
+                Button(
+                    isPaused ? "Resume" : "Pause",
+                    systemImage: isPaused ? "play.fill" : "pause.fill"
+                ) {
+                    Task {
+                        await onTogglePause()
+                    }
+                }
+                .labelStyle(.iconOnly)
+                .font(.title3)
+                .buttonStyle(.bordered)
+            }
         }
     }
 }
@@ -1483,43 +1513,37 @@ struct RecentConversationRow: View {
             Spacer()
 
             // Follow-up button - continue the conversation
-            Button {
+            Button("Continue conversation", systemImage: "arrow.clockwise") {
                 onResume()
-            } label: {
-                Image(systemName: "arrow.clockwise")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
             }
+            .labelStyle(.iconOnly)
+            .font(.title3)
+            .foregroundStyle(.secondary)
             .buttonStyle(.plain)
-            .accessibilityLabel("Continue conversation")
             .accessibilityHint("Pick up where you left off with follow-up questions")
             .disabled(!hasCompletedSession)
             .opacity(hasCompletedSession ? 1.0 : 0.3)
 
             // Analysis button - jump to analysis view
-            Button {
+            Button("View analysis", systemImage: "doc.richtext") {
                 onAnalysis()
-            } label: {
-                Image(systemName: "doc.richtext")
-                    .font(.title3)
-                    .foregroundStyle(.blue)
             }
+            .labelStyle(.iconOnly)
+            .font(.title3)
+            .foregroundStyle(.blue)
             .buttonStyle(.plain)
-            .accessibilityLabel("View analysis")
             .accessibilityHint("Jump to the analysis screen with key points, tensions, and writing style selection")
             .disabled(!hasCompletedSession)
             .opacity(hasCompletedSession ? 1.0 : 0.3)
 
             // New conversation button - view/edit the plan and start fresh
-            Button {
+            Button("Start new conversation", systemImage: "chevron.right") {
                 onFresh()
-            } label: {
-                Image(systemName: "chevron.right")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
             }
+            .labelStyle(.iconOnly)
+            .font(.title3)
+            .foregroundStyle(.secondary)
             .buttonStyle(.plain)
-            .accessibilityLabel("Start new conversation")
             .accessibilityHint("Open the interview plan to start a fresh conversation")
         }
         .padding(.horizontal, 16)

@@ -808,3 +808,71 @@ See `AGENT_ORCHESTRATION.md` for detailed test documentation.
 - **No backend**: Everything runs natively in Swift
 - **Platforms**: macOS 26 + iOS 26 (universal app)
 - **User-provided API key**: Stored in Keychain
+
+---
+
+## Swift & SwiftUI Coding Guidelines
+
+Follow these guidelines to ensure modern, safe API usage aligned with Apple best practices.
+
+### Core Requirements
+
+- Target iOS/macOS 26.0 or later
+- Swift 6.2 or later with modern Swift concurrency
+- SwiftUI backed by `@Observable` classes for shared data
+- Do not introduce third-party frameworks without asking first
+- Avoid UIKit unless requested
+
+### Swift Instructions
+
+- Always mark `@Observable` classes with `@MainActor`
+- Assume strict Swift concurrency rules are being applied
+- Prefer Swift-native alternatives to Foundation methods (e.g., `replacing(_:with:)` over `replacingOccurrences(of:with:)`)
+- Prefer modern Foundation API (e.g., `URL.documentsDirectory`, `appending(path:)`)
+- Never use C-style number formatting like `String(format:)`; use `Text(..., format: .number.precision(...))` instead
+- Prefer static member lookup (`.circle` over `Circle()`, `.borderedProminent` over `BorderedProminentButtonStyle()`)
+- Never use `DispatchQueue.main.async()`; use modern Swift concurrency instead
+- Filter text with `localizedStandardContains()` over `contains()` for user input
+- Avoid force unwraps and force `try` unless unrecoverable
+
+### SwiftUI Instructions
+
+- Use `foregroundStyle()` instead of `foregroundColor()`
+- Use `clipShape(.rect(cornerRadius:))` instead of `cornerRadius()`
+- Use the `Tab` API instead of `tabItem()`
+- Use `@Observable` classes, never `ObservableObject`
+- Use `onChange()` with two parameters or none; never the one-parameter variant
+- Use `Button` over `onTapGesture()` unless you need tap location or count
+- Use `Task.sleep(for:)` over `Task.sleep(nanoseconds:)`
+- Never use `UIScreen.main.bounds`; prefer `GeometryReader` or `containerRelativeFrame()`
+- Extract views into separate `View` structs, not computed properties
+- Use Dynamic Type; don't force specific font sizes
+- Use `NavigationStack` with `navigationDestination(for:)`, never `NavigationView`
+- For image buttons, always include text: `Button("Label", systemImage: "icon", action:)`
+- Use `bold()` over `fontWeight(.bold)`
+- Avoid `GeometryReader` when `containerRelativeFrame()` or `visualEffect()` works
+- Use `ForEach(x.enumerated(), id: \.element.id)` without converting to array
+- Use `.scrollIndicators(.hidden)` over `showsIndicators: false`
+- Avoid `AnyView` unless absolutely required
+- Avoid hard-coded padding/spacing values unless requested
+- Avoid UIKit colors in SwiftUI code
+
+### SwiftData Instructions (CloudKit)
+
+If using CloudKit sync:
+- Never use `@Attribute(.unique)`
+- Model properties must have default values or be optional
+- All relationships must be optional
+
+### Project Structure
+
+- Use consistent folder layout by app features
+- Follow strict naming conventions for types, properties, methods
+- Break types into separate Swift files
+- Write unit tests for core logic; UI tests only when unit tests aren't possible
+- Add code comments and documentation as needed
+- Never commit secrets or API keys to the repository
+
+### PR Guidelines
+
+- Ensure SwiftLint returns no warnings or errors before committing

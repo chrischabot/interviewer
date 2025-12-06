@@ -345,13 +345,12 @@ struct ErrorBanner: View {
                 .buttonStyle(.plain)
             }
 
-            Button {
+            Button("Dismiss", systemImage: "xmark") {
                 onDismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.8))
             }
+            .labelStyle(.iconOnly)
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(.white.opacity(0.8))
             .buttonStyle(.plain)
         }
         .padding()

@@ -142,11 +142,10 @@ struct SettingsView: View {
                         .font(.system(.body, design: .monospaced))
                 }
 
-                Button {
+                Button(isSecure ? "Show API key" : "Hide API key", systemImage: isSecure ? "eye" : "eye.slash") {
                     toggleSecure()
-                } label: {
-                    Image(systemName: isSecure ? "eye" : "eye.slash")
                 }
+                .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
             }
 
