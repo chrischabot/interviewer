@@ -166,6 +166,18 @@ enum AgentLogger {
         log("❌ \(agent) error: \(message)")
     }
 
+    // MARK: - Info Messages
+
+    static func info(agent: String, message: String) {
+        log("ℹ️ \(agent): \(message)")
+    }
+
+    // MARK: - Question Tracking
+
+    static func questionMarkedAsked(questionId: String, method: String) {
+        log("✓ Question marked as asked (id: \(questionId.prefix(8))..., method: \(method))")
+    }
+
     // MARK: - Helpers
 
     private static func formatTime() -> String {

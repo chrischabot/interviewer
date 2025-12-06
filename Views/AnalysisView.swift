@@ -43,7 +43,7 @@ struct AnalysisView: View {
 
     @State private var stage: AnalysisStage = .idle
     @State private var analysis: AnalysisSummary?
-    @State private var errorMessage: String?
+    @State private var currentError: AppError?
     @State private var selectedStyle: DraftStyle = .standard
 
     private var session: InterviewSession? {
@@ -69,16 +69,17 @@ struct AnalysisView: View {
         .task {
             await loadOrGenerateAnalysis()
         }
-        .alert("Analysis Error", isPresented: .init(
-            get: { errorMessage != nil },
-            set: { if !$0 { errorMessage = nil } }
-        )) {
-            Button("Retry") {
+        .errorAlert($currentError) { action in
+            switch action {
+            case .retry:
                 Task { await loadOrGenerateAnalysis() }
+            case .openSettings:
+                appState.showSettings = true
+            case .goBack:
+                appState.navigateBack()
+            default:
+                break
             }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(errorMessage ?? "An unknown error occurred")
         }
     }
 
@@ -115,6 +116,7 @@ struct AnalysisView: View {
                 ProgressView()
                     .scaleEffect(1.5)
             }
+            .accessibilityHidden(true)
 
             VStack(spacing: 8) {
                 Text(stage.title)
@@ -129,28 +131,42 @@ struct AnalysisView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, minHeight: 400)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Analysis in progress")
+        .accessibilityValue("\(stage.title). \(stage.description)")
+        .accessibilityAddTraits(.updatesFrequently)
     }
 
     // MARK: - Error View
 
     private var errorView: some View {
         VStack(spacing: 16) {
-            Image(systemName: "exclamationmark.triangle.fill")
+            Image(systemName: currentError?.icon ?? "exclamationmark.triangle.fill")
                 .font(.system(size: 48))
                 .foregroundStyle(.red)
+                .accessibilityHidden(true)
 
-            Text("Analysis Failed")
+            Text(currentError?.errorDescription ?? "Analysis Failed")
                 .font(.headline)
 
-            Text(errorMessage ?? "Unknown error")
+            Text(currentError?.recoverySuggestion ?? "Unknown error")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
 
-            Button("Try Again") {
-                Task { await loadOrGenerateAnalysis() }
+            HStack(spacing: 12) {
+                Button("Try Again") {
+                    Task { await loadOrGenerateAnalysis() }
+                }
+                .buttonStyle(.borderedProminent)
+
+                if currentError?.primaryAction == .openSettings {
+                    Button("Settings") {
+                        appState.showSettings = true
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
-            .buttonStyle(.borderedProminent)
         }
         .padding()
     }
@@ -354,7 +370,7 @@ struct AnalysisView: View {
 
         // Need to generate analysis
         guard let plan = session.plan else {
-            errorMessage = "No plan associated with this session"
+            currentError = .notFound(what: "Plan")
             stage = .error
             return
         }
@@ -372,8 +388,18 @@ struct AnalysisView: View {
                 )
             }
 
-            // Get notes from coordinator or create empty
-            let notes = await AgentCoordinator.shared.getFinalNotes()
+            // Get notes from coordinator, falling back to persisted notes from session
+            var notes = await AgentCoordinator.shared.getFinalNotes()
+            if notes == .empty, let persistedNotes = session.notesState {
+                notes = NotesState(
+                    keyIdeas: persistedNotes.keyIdeas,
+                    stories: persistedNotes.stories,
+                    claims: persistedNotes.claims,
+                    gaps: persistedNotes.gaps,
+                    contradictions: persistedNotes.contradictions,
+                    possibleTitles: persistedNotes.possibleTitles
+                )
+            }
 
             // Generate analysis
             let newAnalysis = try await AgentCoordinator.shared.analyzeInterview(
@@ -394,14 +420,18 @@ struct AnalysisView: View {
                     suggestedSubtitle: newAnalysis.suggestedSubtitle
                 )
                 session.analysis = model
-                try? modelContext.save()
+                do {
+                    try modelContext.save()
+                } catch {
+                    NSLog("[AnalysisView] ⚠️ Failed to save analysis: %@", error.localizedDescription)
+                }
 
                 analysis = newAnalysis
                 stage = .complete
             }
         } catch {
             await MainActor.run {
-                errorMessage = error.localizedDescription
+                currentError = AppError.from(error, context: .analysisGeneration)
                 stage = .error
             }
         }

@@ -34,8 +34,9 @@ actor WriterAgent {
         AgentLogger.writerStarted(style: style.displayName)
 
         // Build full transcript for reference
+        // Note: The "user" is the author - this is THEIR blog post in THEIR voice
         let transcriptText = transcript.map { entry in
-            let speaker = entry.speaker == "assistant" ? "Interviewer" : "Expert"
+            let speaker = entry.speaker == "assistant" ? "Interviewer" : "Author"
             return "[\(speaker)]: \(entry.text)"
         }.joined(separator: "\n\n")
 
@@ -52,29 +53,34 @@ actor WriterAgent {
         ## Analysis Summary
         \(analysisSummary)
 
-        ## Full Transcript (for exact quotes)
+        ## Full Transcript (for reference - the Author's actual words and phrasings)
         \(transcriptText)
 
         ---
 
-        Write a compelling blog post essay based on this interview.
+        **CRITICAL: This is the AUTHOR'S personal blog.**
+
+        The person labeled "Author" in the transcript is writing this essay to share THEIR OWN experiences and insights with the world. This is NOT a journalist writing about "an expert" - this IS the expert, speaking directly to their readers in first person.
+
+        Write as if you ARE the author, sharing YOUR thoughts, YOUR experiences, YOUR hard-won insights.
 
         **Style:** \(style.rawValue)
         \(styleGuidance(for: style))
 
         **Requirements:**
 
-        1. **Use the suggested title** "\(analysis.suggestedTitle)" (or improve it)
-        2. **Open with a hook** - A surprising insight, a vivid scene, or a provocative question
-        3. **Weave in direct quotes** - Use the expert's actual words (from the transcript)
-        4. **Structure around main claims** - Each major point should have supporting stories/evidence
-        5. **Acknowledge tensions** - Where the expert showed nuance, reflect that
-        6. **End with a call to action or reflection** - Leave the reader thinking
+        1. **Use first person throughout** - "I learned...", "In my experience...", "Here's what I discovered..."
+        2. **Use the suggested title** "\(analysis.suggestedTitle)" (or improve it)
+        3. **Open with a hook** - A surprising insight, a vivid scene, or a provocative question
+        4. **Preserve the author's voice** - Use their vocabulary, their turns of phrase, their way of building arguments
+        5. **Structure around main claims** - Each major point should have supporting stories/evidence from the transcript
+        6. **Acknowledge tensions** - Where nuance was expressed, reflect that complexity
+        7. **End with resonance** - A call to action or reflection that lingers
 
         Output the essay as clean markdown with:
         - # for the main title
         - ## for section headers
-        - > for pull quotes
+        - > for pull quotes (the author's own memorable lines, formatted for emphasis)
         - *italics* for emphasis
         - --- for section breaks if needed
 
@@ -143,47 +149,60 @@ actor WriterAgent {
         switch style {
         case .standard:
             return """
-            - Balanced narrative with clear structure
-            - Mix of exposition and quotes
-            - Professional but accessible tone
-            - Medium-length paragraphs
+            - Elegant prose with clear narrative arc
+            - Varied sentence rhythm (short + flowing)
+            - Personal stories woven with broader insights
+            - The confident voice of someone sharing what they've learned
             """
         case .punchy:
             return """
-            - Direct and energetic
-            - Short paragraphs, punchy sentences
-            - Bold statements up front
-            - More quotes, less exposition
-            - Conversational, slightly provocative
+            - Direct, energetic, slightly provocative
+            - Short paragraphs. Sharp observations.
+            - Lead with the most surprising insight
+            - Write like you're the smartest person at the party and you know it
             """
         case .reflective:
             return """
-            - Thoughtful and introspective
-            - Explore nuances and trade-offs
-            - Longer, more considered paragraphs
-            - Room for the reader to think
-            - Acknowledge complexity
+            - Thoughtful, contemplative pace
+            - Room to explore nuance and complexity
+            - Insights that unfold gradually
+            - The wisdom of someone who's earned their perspective
             """
         }
     }
 
     private func systemPrompt(for style: DraftStyle) -> String {
         let basePrompt = """
-        You are an expert essay writer specializing in interview-based content. Your job is to transform a raw interview transcript and analysis into a compelling, readable blog post.
+        You are a ghostwriter helping someone turn their spoken interview into a polished personal essay. The essay will be published as THEIR blog post, in THEIR voice, under THEIR name.
+
+        **Critical: This is FIRST PERSON writing.**
+
+        You are not a journalist writing about "an expert." You are channeling the author's voice to help them express what they already said - just more eloquently. Think of yourself as a brilliant editor who polishes rough gems into finished jewels while preserving their essential character.
 
         **Your Writing Philosophy:**
 
-        1. **Start strong** - The first paragraph should hook the reader. Don't waste it on "In this interview, we talked about..."
+        1. **Write with wit and warmth** - Be erudite without being stuffy. Charming without being saccharine. The best essays feel like a brilliant friend explaining something fascinating over drinks.
 
-        2. **Show, don't tell** - Instead of "John is passionate about testing," write "John leans forward, his voice rising. 'Every time I see an untested function, I imagine a user somewhere hitting that bug.'"
+        2. **Let ideas flow naturally** - Don't just state facts. Build arguments that carry the reader along. Use rhythm, varied sentence length, and the occasional surprising turn of phrase.
 
-        3. **Use the expert's voice** - Direct quotes are gold. They bring authenticity and personality.
+        3. **Avoid the phantom argument trap** - Do NOT write patterns like "X is happening... but not just because of Y" or "This isn't merely about Z." These constructions argue against objections nobody raised. If you want to add nuance, do it positively: "X is happening, and here's the fascinating part..."
 
-        4. **Create narrative arc** - Even an informational essay should have flow: setup → development → insight → conclusion.
+        4. **Start strong** - The first paragraph should hook. Don't waste it on "In this essay, I'll discuss..."
 
-        5. **Cut the fluff** - Every sentence should earn its place. No filler, no padding.
+        5. **Show, don't tell** - Instead of "I'm passionate about testing," write "Every time I see an untested function, I imagine a user somewhere hitting that bug at 3am."
 
-        6. **End with resonance** - The conclusion should either call the reader to action or leave them with something to think about.
+        6. **Create narrative arc** - Even an informational essay should flow: setup → development → insight → conclusion.
+
+        7. **Cut the fluff** - Every sentence should earn its place. No filler, no throat-clearing, no padding.
+
+        8. **End with resonance** - Leave the reader with something that lingers.
+
+        **Anti-patterns to avoid:**
+        - "It's not just about X" / "Not merely Y" / "More than just Z" (argues against phantom objections)
+        - "One expert says..." / "According to..." (this IS the expert speaking)
+        - "In this post, I will..." (just do it)
+        - "As mentioned earlier..." (trust the reader)
+        - Generic business-speak ("leverage", "synergy", "optimize")
         """
 
         switch style {
@@ -191,30 +210,33 @@ actor WriterAgent {
             return basePrompt + """
 
             **Standard Style Notes:**
-            - Clear, professional prose
-            - Balanced use of quotes and exposition
-            - Well-organized sections
-            - Accessible to a general audience
+            - Elegant, flowing prose that rewards careful reading
+            - The intellectual clarity of a well-argued essay
+            - Mix vivid personal moments with broader insights
+            - Varied rhythm: some short punchy lines, some longer flowing sentences
+            - The voice of someone who's thought deeply about this
             """
         case .punchy:
             return basePrompt + """
 
             **Punchy Style Notes:**
-            - Short sentences. Short paragraphs.
-            - Lead with the strongest point
-            - Be slightly provocative
-            - Use more quotes, fewer transitions
-            - Write like you're talking to a smart friend
+            - Short sentences. Sharp observations.
+            - Lead with the most surprising insight
+            - A bit provocative - make the reader sit up
+            - Confident, almost swaggering prose
+            - Write like a brilliant contrarian at a dinner party
+            - Energy and momentum on every line
             """
         case .reflective:
             return basePrompt + """
 
             **Reflective Style Notes:**
-            - Take time to explore ideas
-            - Acknowledge complexity and nuance
-            - Let insights develop gradually
-            - Use thoughtful transitions
-            - Leave room for the reader to draw conclusions
+            - The pace of someone thinking out loud, carefully
+            - Room to explore ideas, acknowledge complexity
+            - A wise friend sharing hard-won wisdom
+            - Insights that unfold gradually
+            - Some beautiful sentences worth re-reading
+            - Leave the reader contemplating
             """
         }
     }

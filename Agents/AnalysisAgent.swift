@@ -82,7 +82,7 @@ actor AnalysisAgent {
         }.joined(separator: "\n\n")
 
         // Build notes summary
-        let notesSummary = buildNotesSummary(notes)
+        let notesSummary = notes.buildSummary()
 
         let userPrompt = """
         ## Interview Context
@@ -153,38 +153,6 @@ actor AnalysisAgent {
         guard let lastActivity = lastActivityTime else { return 0.0 }
         let elapsed = Date().timeIntervalSince(lastActivity)
         return max(0, 1.0 - (elapsed / 30.0))
-    }
-
-    // MARK: - Helpers
-
-    private func buildNotesSummary(_ notes: NotesState) -> String {
-        var parts: [String] = []
-
-        if !notes.keyIdeas.isEmpty {
-            parts.append("**Key Ideas:**\n" + notes.keyIdeas.map { "- \($0.text)" }.joined(separator: "\n"))
-        }
-
-        if !notes.stories.isEmpty {
-            parts.append("**Stories:**\n" + notes.stories.map { "- \($0.summary) (Impact: \($0.impact))" }.joined(separator: "\n"))
-        }
-
-        if !notes.claims.isEmpty {
-            parts.append("**Claims:**\n" + notes.claims.map { "- \($0.text) [confidence: \($0.confidence)]" }.joined(separator: "\n"))
-        }
-
-        if !notes.gaps.isEmpty {
-            parts.append("**Gaps (unexplored):**\n" + notes.gaps.map { "- \($0.description)" }.joined(separator: "\n"))
-        }
-
-        if !notes.contradictions.isEmpty {
-            parts.append("**Contradictions:**\n" + notes.contradictions.map { "- \($0.description)" }.joined(separator: "\n"))
-        }
-
-        if !notes.possibleTitles.isEmpty {
-            parts.append("**Possible Titles (from live session):**\n" + notes.possibleTitles.map { "- \($0)" }.joined(separator: "\n"))
-        }
-
-        return parts.isEmpty ? "(No notes from live session)" : parts.joined(separator: "\n\n")
     }
 
     // MARK: - System Prompt

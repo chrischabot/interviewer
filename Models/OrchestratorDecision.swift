@@ -18,12 +18,14 @@ struct NextQuestion: Codable, Equatable {
     let text: String
     let targetSectionId: String
     let source: String  // "plan" | "gap" | "contradiction" | "research"
+    let sourceQuestionId: String?  // ID of the original plan question if source is "plan"
     let expectedAnswerSeconds: Int
 
     enum CodingKeys: String, CodingKey {
         case text
         case targetSectionId = "target_section_id"
         case source
+        case sourceQuestionId = "source_question_id"
         case expectedAnswerSeconds = "expected_answer_seconds"
     }
 
@@ -31,11 +33,13 @@ struct NextQuestion: Codable, Equatable {
         text: String,
         targetSectionId: String,
         source: String = "plan",
+        sourceQuestionId: String? = nil,
         expectedAnswerSeconds: Int = 60
     ) {
         self.text = text
         self.targetSectionId = targetSectionId
         self.source = source
+        self.sourceQuestionId = sourceQuestionId
         self.expectedAnswerSeconds = expectedAnswerSeconds
     }
 }

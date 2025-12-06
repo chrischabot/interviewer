@@ -56,63 +56,63 @@ enum PlanGenerationStage: CaseIterable {
 struct PlanGenerationOverlay: View {
     let stage: PlanGenerationStage
 
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
     var body: some View {
-        ZStack {
-            // Background blur
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .ignoresSafeArea()
+        GlassOverlay {
+            GlassPanel(cornerRadius: 20, padding: 32) {
+                VStack(spacing: 24) {
+                    // Animated icon
+                    ZStack {
+                        Circle()
+                            .fill(.blue.opacity(0.1))
+                            .frame(width: 80, height: 80)
 
-            // Content card
-            VStack(spacing: 24) {
-                // Animated icon
-                ZStack {
-                    Circle()
-                        .fill(.blue.opacity(0.1))
-                        .frame(width: 80, height: 80)
+                        Image(systemName: stage.icon)
+                            .font(.system(size: 32))
+                            .foregroundStyle(.blue)
+                            .symbolEffect(.pulse, options: .repeating)
+                    }
+                    .accessibilityHidden(true)
 
-                    Image(systemName: stage.icon)
-                        .font(.system(size: 32))
-                        .foregroundStyle(.blue)
-                        .symbolEffect(.pulse, options: .repeating)
-                }
+                    // Stage info
+                    VStack(spacing: 8) {
+                        Text(stage.title)
+                            .font(.headline)
 
-                // Stage info
-                VStack(spacing: 8) {
-                    Text(stage.title)
-                        .font(.headline)
+                        Text(stage.description)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
 
-                    Text(stage.description)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                }
+                    // Progress bar
+                    VStack(spacing: 8) {
+                        ProgressView(value: stage.progress)
+                            .progressViewStyle(.linear)
+                            .tint(.blue)
 
-                // Progress bar
-                VStack(spacing: 8) {
-                    ProgressView(value: stage.progress)
-                        .progressViewStyle(.linear)
-                        .tint(.blue)
+                        // Stage indicators
+                        HStack(spacing: 0) {
+                            ForEach(Array(PlanGenerationStage.allCases.dropFirst().enumerated()), id: \.offset) { index, s in
+                                Circle()
+                                    .fill(stageCompleted(s) ? Color.blue : Color.gray.opacity(0.3))
+                                    .frame(width: 8, height: 8)
 
-                    // Stage indicators
-                    HStack(spacing: 0) {
-                        ForEach(Array(PlanGenerationStage.allCases.dropFirst().enumerated()), id: \.offset) { index, s in
-                            Circle()
-                                .fill(stageCompleted(s) ? Color.blue : Color.gray.opacity(0.3))
-                                .frame(width: 8, height: 8)
-
-                            if index < 3 {
-                                Spacer()
+                                if index < 3 {
+                                    Spacer()
+                                }
                             }
                         }
+                        .padding(.horizontal, 4)
                     }
-                    .padding(.horizontal, 4)
+                    .frame(width: 200)
                 }
-                .frame(width: 200)
             }
-            .padding(32)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
-            .shadow(color: .black.opacity(0.1), radius: 20)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Generating interview plan")
+            .accessibilityValue("\(stage.title). \(stage.description). \(Int(stage.progress * 100)) percent complete")
+            .accessibilityAddTraits(.updatesFrequently)
         }
         .animation(.easeInOut(duration: 0.3), value: stage)
     }
@@ -186,9 +186,12 @@ struct HomeView: View {
     @Query(sort: \Plan.createdAt, order: .reverse) private var recentPlans: [Plan]
 
     @State private var topic = ""
+    @State private var context = ""
+    @State private var durationMinutes: Double = 10
+    @State private var showAdvancedOptions = false
     @State private var isGenerating = false
     @State private var generationStage: PlanGenerationStage = .idle
-    @State private var errorMessage: String?
+    @State private var currentError: AppError?
     @FocusState private var isInputFocused: Bool
 
     var body: some View {
@@ -231,6 +234,8 @@ struct HomeView: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(!canSubmit)
+                    .accessibilityLabel(isGenerating ? "Stop generating" : "Generate interview plan")
+                    .accessibilityHint(canSubmit ? "Double tap to generate an interview plan for this topic" : "Enter a topic first")
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
@@ -243,6 +248,69 @@ struct HomeView: View {
                         )
                 )
                 .frame(maxWidth: 600)
+
+                // Advanced options toggle
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showAdvancedOptions.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("Options")
+                            .font(.caption)
+                        Image(systemName: showAdvancedOptions ? "chevron.up" : "chevron.down")
+                            .font(.caption2)
+                    }
+                    .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+
+                // Advanced options
+                if showAdvancedOptions {
+                    VStack(spacing: 16) {
+                        // Duration slider
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Duration")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Text("\(Int(durationMinutes)) minutes")
+                                    .font(.subheadline.monospacedDigit())
+                                    .foregroundStyle(.primary)
+                            }
+
+                            Slider(value: $durationMinutes, in: 5...20, step: 1)
+                                .tint(.accentColor)
+                                .accessibilityLabel("Interview duration")
+                                .accessibilityValue("\(Int(durationMinutes)) minutes")
+                        }
+
+                        // Context field
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Additional context (optional)")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+
+                            TextField("e.g., Focus on technical challenges, my experience is in...", text: $context, axis: .vertical)
+                                .textFieldStyle(.plain)
+                                .font(.callout)
+                                .lineLimit(2...4)
+                                .padding(12)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .fill(Color.primary.opacity(0.03))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 12)
+                                                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                                        )
+                                )
+                        }
+                    }
+                    .frame(maxWidth: 600)
+                    .padding(.top, 8)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
             }
             .padding(.horizontal, 32)
 
@@ -263,13 +331,15 @@ struct HomeView: View {
                 }
             }
         }
-        .alert("Error", isPresented: .init(
-            get: { errorMessage != nil },
-            set: { if !$0 { errorMessage = nil } }
-        )) {
-            Button("OK") { errorMessage = nil }
-        } message: {
-            Text(errorMessage ?? "An unknown error occurred")
+        .errorAlert($currentError) { action in
+            switch action {
+            case .retry:
+                generatePlan()
+            case .openSettings:
+                appState.showSettings = true
+            default:
+                break
+            }
         }
         .overlay {
             if isGenerating {
@@ -329,7 +399,7 @@ struct HomeView: View {
     private func generatePlan() {
         isGenerating = true
         generationStage = .analyzing
-        errorMessage = nil
+        currentError = nil
         isInputFocused = false
 
         Task {
@@ -339,10 +409,11 @@ struct HomeView: View {
                 await MainActor.run { generationStage = .designing }
 
                 // Stage 2: Designing structure (API call happens here)
+                let targetMinutes = Int(durationMinutes)
                 let response = try await AgentCoordinator.shared.generatePlan(
                     topic: topic,
-                    context: "",
-                    targetMinutes: 10
+                    context: context,
+                    targetMinutes: targetMinutes
                 )
 
                 // Stage 3: Generating questions
@@ -352,7 +423,7 @@ struct HomeView: View {
                 // Convert response to SwiftData model
                 let plan = response.toPlan(
                     topic: topic,
-                    targetSeconds: 10 * 60
+                    targetSeconds: targetMinutes * 60
                 )
 
                 // Stage 4: Finalizing
@@ -362,19 +433,26 @@ struct HomeView: View {
                 // Save to SwiftData
                 await MainActor.run {
                     modelContext.insert(plan)
-                    try? modelContext.save()
+                    do {
+                        try modelContext.save()
+                    } catch {
+                        NSLog("[HomeView] ⚠️ Failed to save plan: %@", error.localizedDescription)
+                    }
 
                     // Navigate to plan editor
                     appState.navigate(to: .planning(planId: plan.id))
 
                     // Clear form
                     topic = ""
+                    context = ""
+                    durationMinutes = 10
+                    showAdvancedOptions = false
                     isGenerating = false
                     generationStage = .idle
                 }
             } catch {
                 await MainActor.run {
-                    errorMessage = error.localizedDescription
+                    currentError = AppError.from(error, context: .planGeneration)
                     isGenerating = false
                     generationStage = .idle
                 }
@@ -613,7 +691,11 @@ struct PlanEditorView: View {
 
     private func deletePlan(_ plan: Plan) {
         modelContext.delete(plan)
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            NSLog("[PlanEditorView] ⚠️ Failed to delete plan: %@", error.localizedDescription)
+        }
         appState.navigateBack()
     }
 }
@@ -868,13 +950,22 @@ struct InterviewView: View {
         } message: {
             Text("This will end the interview session. You can review the transcript afterwards.")
         }
-        .alert("Error", isPresented: .init(
-            get: { sessionManager.errorMessage != nil },
-            set: { if !$0 { sessionManager.errorMessage = nil } }
-        )) {
-            Button("OK") { sessionManager.errorMessage = nil }
-        } message: {
-            Text(sessionManager.errorMessage ?? "An unknown error occurred")
+        .errorAlert(Binding(
+            get: { sessionManager.errorMessage.map { AppError.from(GenericError(message: $0), context: .interviewConnection) } },
+            set: { if $0 == nil { sessionManager.errorMessage = nil } }
+        )) { action in
+            switch action {
+            case .retry, .reconnect:
+                if let plan {
+                    Task {
+                        await sessionManager.startSession(plan: plan)
+                    }
+                }
+            case .openSettings:
+                appState.showSettings = true
+            default:
+                break
+            }
         }
     }
 
@@ -906,37 +997,92 @@ struct InterviewView: View {
                 }
             }
         }
+        .onChange(of: sessionManager.state) { oldState, newState in
+            // Handle auto-end: when state changes from active to ended (not via manual end button)
+            if oldState == .active && newState == .ended && savedSessionId == nil {
+                Task {
+                    await saveSessionAfterAutoEnd()
+                }
+            }
+        }
+    }
+
+    private func saveSessionAfterAutoEnd() async {
+        // Save session to SwiftData after auto-end
+        guard let plan else { return }
+
+        let session = InterviewSession(
+            startedAt: Date().addingTimeInterval(-Double(sessionManager.elapsedSeconds)),
+            endedAt: Date(),
+            elapsedSeconds: sessionManager.elapsedSeconds,
+            plan: plan
+        )
+
+        // Save transcript as utterances
+        for entry in sessionManager.transcript {
+            let utterance = Utterance(
+                speaker: entry.speaker,
+                text: entry.text,
+                timestamp: entry.timestamp
+            )
+            utterance.session = session
+            session.utterances.append(utterance)
+        }
+
+        // Save notes state
+        let notesModel = NotesStateModel()
+        notesModel.keyIdeas = sessionManager.currentNotes.keyIdeas
+        notesModel.stories = sessionManager.currentNotes.stories
+        notesModel.claims = sessionManager.currentNotes.claims
+        notesModel.gaps = sessionManager.currentNotes.gaps
+        notesModel.contradictions = sessionManager.currentNotes.contradictions
+        notesModel.possibleTitles = sessionManager.currentNotes.possibleTitles
+        session.notesState = notesModel
+
+        await MainActor.run {
+            modelContext.insert(session)
+            do {
+                try modelContext.save()
+            } catch {
+                NSLog("[InterviewView] ⚠️ Failed to save session: %@", error.localizedDescription)
+            }
+            savedSessionId = session.id
+        }
     }
 
     // MARK: - Timer Header
 
     private var timerHeader: some View {
-        HStack(spacing: 12) {
-            // Voice orb - shows AI state
-            VoiceOrbView(
-                audioLevel: sessionManager.assistantAudioLevel,
-                isActive: sessionManager.isAssistantSpeaking,
-                isListening: sessionManager.isUserSpeaking
-            )
+        GlassToolbar {
+            HStack(spacing: 12) {
+                // Voice orb - shows AI state
+                VoiceOrbView(
+                    audioLevel: sessionManager.assistantAudioLevel,
+                    isActive: sessionManager.isAssistantSpeaking,
+                    isListening: sessionManager.isUserSpeaking
+                )
 
-            // Topic title
-            if let topic = plan?.topic {
-                Text(topic)
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
+                // Topic title
+                if let topic = plan?.topic {
+                    Text(topic)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                // Countdown timer
+                Text(sessionManager.formattedCountdownTime)
+                    .font(.system(.title2, design: .monospaced))
+                    .fontWeight(.medium)
+                    .foregroundStyle(sessionManager.isOvertime ? .red : .primary)
+                    .accessibilityLabel("Time remaining")
+                    .accessibilityValue(sessionManager.isOvertime ? "Overtime by \(sessionManager.formattedCountdownTime)" : "\(sessionManager.formattedCountdownTime) remaining")
             }
-
-            Spacer()
-
-            // Countdown timer
-            Text(sessionManager.formattedCountdownTime)
-                .font(.system(.title2, design: .monospaced))
-                .fontWeight(.medium)
-                .foregroundStyle(sessionManager.isOvertime ? .red : .primary)
         }
-        .padding()
-        .background(.bar)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Interview status")
     }
 
     // MARK: - Connecting Screen
@@ -971,25 +1117,25 @@ struct InterviewView: View {
                             InterviewerTextBox(entry: entry)
                                 .id(entry.id)
                         }
+
+                        // Invisible anchor at the bottom for reliable scrolling
+                        Color.clear
+                            .frame(height: 1)
+                            .id("transcript-bottom-anchor")
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 16)
                     .frame(maxWidth: .infinity)
                 }
                 .onChange(of: sessionManager.transcript.count) { _, _ in
-                    if let lastEntry = sessionManager.transcript.filter({ $0.speaker == "assistant" }).last {
-                        withAnimation {
-                            proxy.scrollTo(lastEntry.id, anchor: .bottom)
-                        }
-                    }
+                    scrollToBottom(proxy: proxy)
                 }
                 .onChange(of: sessionManager.transcript.last?.text) { _, _ in
                     // Also scroll when text updates (streaming)
-                    if let lastEntry = sessionManager.transcript.filter({ $0.speaker == "assistant" }).last {
-                        withAnimation {
-                            proxy.scrollTo(lastEntry.id, anchor: .bottom)
-                        }
-                    }
+                    scrollToBottom(proxy: proxy)
+                }
+                .onAppear {
+                    scrollToBottom(proxy: proxy)
                 }
             }
 
@@ -1000,37 +1146,49 @@ struct InterviewView: View {
         }
     }
 
-    private var interviewControls: some View {
-        HStack(spacing: 16) {
-            // Status indicator - Yellow when mic is muted, Green when listening
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(sessionManager.isMicMuted ? Color.yellow : Color.green)
-                    .frame(width: 10, height: 10)
-                Text(sessionManager.isMicMuted ? "Mic Off" : (sessionManager.isUserSpeaking ? "Listening..." : "Ready"))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+    private func scrollToBottom(proxy: ScrollViewProxy) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            withAnimation(.easeOut(duration: 0.2)) {
+                proxy.scrollTo("transcript-bottom-anchor", anchor: .bottom)
             }
-
-            Spacer()
-
-            // Pause/Resume button
-            Button {
-                Task {
-                    if sessionManager.state == .active {
-                        await sessionManager.pauseSession()
-                    } else {
-                        await sessionManager.resumeSession()
-                    }
-                }
-            } label: {
-                Image(systemName: sessionManager.state == .paused ? "play.fill" : "pause.fill")
-                    .font(.title3)
-            }
-            .buttonStyle(.bordered)
         }
-        .padding()
-        .background(.bar)
+    }
+
+    private var interviewControls: some View {
+        GlassToolbar {
+            HStack(spacing: 16) {
+                // Status indicator - Yellow when mic is muted, Green when listening
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(sessionManager.isMicMuted ? Color.yellow : Color.green)
+                        .frame(width: 10, height: 10)
+                        .accessibilityHidden(true)
+                    Text(sessionManager.isMicMuted ? "Mic Off" : (sessionManager.isUserSpeaking ? "Listening..." : "Ready"))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Microphone status")
+                .accessibilityValue(sessionManager.isMicMuted ? "Microphone is muted" : (sessionManager.isUserSpeaking ? "Listening to you" : "Ready to listen"))
+
+                Spacer()
+
+                // Pause/Resume button
+                Button {
+                    Task {
+                        if sessionManager.state == .active {
+                            await sessionManager.pauseSession()
+                        } else {
+                            await sessionManager.resumeSession()
+                        }
+                    }
+                } label: {
+                    Image(systemName: sessionManager.state == .paused ? "play.fill" : "pause.fill")
+                        .font(.title3)
+                }
+                .buttonStyle(.bordered)
+            }
+        }
     }
 
     // MARK: - Ending Screen
@@ -1131,7 +1289,11 @@ struct InterviewView: View {
 
         await MainActor.run {
             modelContext.insert(session)
-            try? modelContext.save()
+            do {
+                try modelContext.save()
+            } catch {
+                NSLog("[InterviewView] ⚠️ Failed to save session: %@", error.localizedDescription)
+            }
             savedSessionId = session.id
         }
     }

@@ -58,10 +58,21 @@ struct ResearcherResponse: Codable {
 actor ResearcherAgent {
     private let client: OpenAIClient
     private var lastActivityTime: Date?
-    private var researchedTopics: Set<String> = []  // Avoid re-researching
+    private var researchedTopics: Set<String> = []  // Avoid re-researching same topic
+    private var researchedAt: [String: Date] = [:]  // Track when topics were researched
+
+    // Time after which a topic can be researched again (for fresh context)
+    private let topicRefreshInterval: TimeInterval = 300  // 5 minutes
 
     init(client: OpenAIClient = .shared) {
         self.client = client
+    }
+
+    /// Reset state for a new interview session
+    func reset() {
+        researchedTopics = []
+        researchedAt = [:]
+        lastActivityTime = nil
     }
 
     /// Research new concepts mentioned in the transcript
@@ -74,9 +85,15 @@ actor ResearcherAgent {
 
         AgentLogger.researcherStarted()
 
-        // Update researched topics from existing research
+        // Update researched topics from existing research (only if not stale)
+        let now = Date()
         for item in existingResearch {
-            researchedTopics.insert(item.topic.lowercased())
+            let topicKey = item.topic.lowercased()
+            // Only mark as researched if we researched it recently
+            if let researchDate = researchedAt[topicKey],
+               now.timeIntervalSince(researchDate) < topicRefreshInterval {
+                researchedTopics.insert(topicKey)
+            }
         }
 
         // First, analyze transcript to identify topics worth researching
@@ -99,7 +116,9 @@ actor ResearcherAgent {
         for searchTopic in topicsToResearch.prefix(3) {  // Limit to 3 per cycle to manage cost/latency
             AgentLogger.researcherLookingUp(topic: searchTopic.topic, reason: searchTopic.kind)
             if let item = try? await researchTopic(searchTopic) {
-                researchedTopics.insert(searchTopic.topic.lowercased())
+                let topicKey = searchTopic.topic.lowercased()
+                researchedTopics.insert(topicKey)
+                researchedAt[topicKey] = Date()  // Track when we researched this
                 newResearchItems.append(item)
                 AgentLogger.researcherFound(topic: item.topic, summary: item.summary)
             }

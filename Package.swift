@@ -17,7 +17,7 @@ let package = Package(
         .executableTarget(
             name: "Interviewer",
             path: ".",
-            exclude: ["Package.swift", "PLAN.md", "CLAUDE.md"],
+            exclude: ["Package.swift", "PLAN.md", "CLAUDE.md", "AGENT_ORCHESTRATION.md", "README.md", "LICENSE", "Tests"],
             sources: [
                 "App",
                 "Views",
@@ -28,6 +28,11 @@ let package = Package(
                 "Prompts",
                 "Agents"
             ]
+        ),
+        .testTarget(
+            name: "InterviewerTests",
+            dependencies: ["Interviewer"],
+            path: "Tests"
         )
     ]
 )

@@ -48,7 +48,7 @@ struct DraftView: View {
 
     @State private var stage: DraftGenerationStage = .idle
     @State private var markdownContent: String = ""
-    @State private var errorMessage: String?
+    @State private var currentError: AppError?
     @State private var showCopiedFeedback = false
 
     private var session: InterviewSession? {
@@ -79,26 +79,31 @@ struct DraftView: View {
                     } label: {
                         Label(showCopiedFeedback ? "Copied!" : "Copy", systemImage: showCopiedFeedback ? "checkmark" : "doc.on.doc")
                     }
+                    .accessibilityLabel(showCopiedFeedback ? "Essay copied to clipboard" : "Copy essay to clipboard")
+                    .accessibilityHint("Double tap to copy the essay markdown to your clipboard")
 
                     ShareLink(item: markdownContent) {
                         Label("Share", systemImage: "square.and.arrow.up")
                     }
+                    .accessibilityLabel("Share essay")
+                    .accessibilityHint("Double tap to share the essay")
                 }
             }
         }
         .task {
             await loadOrGenerateDraft()
         }
-        .alert("Draft Error", isPresented: .init(
-            get: { errorMessage != nil },
-            set: { if !$0 { errorMessage = nil } }
-        )) {
-            Button("Retry") {
+        .errorAlert($currentError) { action in
+            switch action {
+            case .retry:
                 Task { await loadOrGenerateDraft() }
+            case .openSettings:
+                appState.showSettings = true
+            case .goBack:
+                appState.navigateBack()
+            default:
+                break
             }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(errorMessage ?? "An unknown error occurred")
         }
     }
 
@@ -128,6 +133,7 @@ struct DraftView: View {
                 ProgressView()
                     .scaleEffect(1.5)
             }
+            .accessibilityHidden(true)
 
             VStack(spacing: 8) {
                 Text(stage.title)
@@ -142,28 +148,42 @@ struct DraftView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, minHeight: 400)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Essay generation in progress")
+        .accessibilityValue("\(stage.title). \(stage.description)")
+        .accessibilityAddTraits(.updatesFrequently)
     }
 
     // MARK: - Error View
 
     private var errorView: some View {
         VStack(spacing: 16) {
-            Image(systemName: "exclamationmark.triangle.fill")
+            Image(systemName: currentError?.icon ?? "exclamationmark.triangle.fill")
                 .font(.system(size: 48))
                 .foregroundStyle(.red)
+                .accessibilityHidden(true)
 
-            Text("Draft Generation Failed")
+            Text(currentError?.errorDescription ?? "Draft Generation Failed")
                 .font(.headline)
 
-            Text(errorMessage ?? "Unknown error")
+            Text(currentError?.recoverySuggestion ?? "Unknown error")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
 
-            Button("Try Again") {
-                Task { await loadOrGenerateDraft() }
+            HStack(spacing: 12) {
+                Button("Try Again") {
+                    Task { await loadOrGenerateDraft() }
+                }
+                .buttonStyle(.borderedProminent)
+
+                if currentError?.primaryAction == .openSettings {
+                    Button("Settings") {
+                        appState.showSettings = true
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
-            .buttonStyle(.borderedProminent)
         }
         .padding()
     }
@@ -236,14 +256,14 @@ struct DraftView: View {
 
         // Need to generate draft
         guard let plan = session.plan else {
-            errorMessage = "No plan associated with this session"
+            currentError = .notFound(what: "Plan")
             stage = .error
             return
         }
 
         // Check for analysis
         guard let analysis = appState.currentAnalysis ?? loadAnalysisFromSession(session) else {
-            errorMessage = "No analysis available. Please run analysis first."
+            currentError = .notFound(what: "Analysis")
             stage = .error
             return
         }
@@ -277,14 +297,18 @@ struct DraftView: View {
                 )
                 draft.session = session
                 session.drafts.append(draft)
-                try? modelContext.save()
+                do {
+                    try modelContext.save()
+                } catch {
+                    NSLog("[DraftView] ⚠️ Failed to save draft: %@", error.localizedDescription)
+                }
 
                 markdownContent = markdown
                 stage = .complete
             }
         } catch {
             await MainActor.run {
-                errorMessage = error.localizedDescription
+                currentError = AppError.from(error, context: .draftGeneration)
                 stage = .error
             }
         }

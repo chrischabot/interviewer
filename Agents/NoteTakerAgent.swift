@@ -7,6 +7,8 @@ struct NoteTakerResponse: Codable {
     let claims: [ClaimResponse]
     let gaps: [GapResponse]
     let contradictions: [ContradictionResponse]
+    let sectionCoverage: [SectionCoverageResponse]
+    let quotableLines: [QuotableLineResponse]
     let possibleTitles: [String]
 
     enum CodingKeys: String, CodingKey {
@@ -15,6 +17,8 @@ struct NoteTakerResponse: Codable {
         case claims
         case gaps
         case contradictions
+        case sectionCoverage = "section_coverage"
+        case quotableLines = "quotable_lines"
         case possibleTitles = "possible_titles"
     }
 
@@ -62,6 +66,38 @@ struct NoteTakerResponse: Codable {
         }
     }
 
+    struct SectionCoverageResponse: Codable {
+        let sectionId: String
+        let sectionTitle: String
+        let coverageQuality: String
+        let keyPointsCovered: [String]
+        let missingAspects: [String]
+        let suggestedFollowup: String?
+
+        enum CodingKeys: String, CodingKey {
+            case sectionId = "section_id"
+            case sectionTitle = "section_title"
+            case coverageQuality = "coverage_quality"
+            case keyPointsCovered = "key_points_covered"
+            case missingAspects = "missing_aspects"
+            case suggestedFollowup = "suggested_followup"
+        }
+    }
+
+    struct QuotableLineResponse: Codable {
+        let text: String
+        let potentialUse: String
+        let topic: String
+        let strength: String
+
+        enum CodingKeys: String, CodingKey {
+            case text
+            case potentialUse = "potential_use"
+            case topic
+            case strength
+        }
+    }
+
     /// Convert response to NotesState
     func toNotesState() -> NotesState {
         NotesState(
@@ -77,7 +113,25 @@ struct NoteTakerResponse: Codable {
                     suggestedClarificationQuestion: $0.suggestedClarificationQuestion
                 )
             },
-            possibleTitles: possibleTitles
+            possibleTitles: possibleTitles,
+            sectionCoverage: sectionCoverage.map {
+                SectionCoverage(
+                    id: $0.sectionId,
+                    sectionTitle: $0.sectionTitle,
+                    coverageQuality: $0.coverageQuality,
+                    keyPointsCovered: $0.keyPointsCovered,
+                    missingAspects: $0.missingAspects,
+                    suggestedFollowup: $0.suggestedFollowup
+                )
+            },
+            quotableLines: quotableLines.map {
+                QuotableLine(
+                    text: $0.text,
+                    potentialUse: $0.potentialUse,
+                    topic: $0.topic,
+                    strength: $0.strength
+                )
+            }
         )
     }
 }
@@ -95,7 +149,7 @@ actor NoteTakerAgent {
     func updateNotes(
         transcript: [TranscriptEntry],
         currentNotes: NotesState,
-        plan: Plan
+        plan: PlanSnapshot
     ) async throws -> NotesState {
         lastActivityTime = Date()
 
@@ -108,7 +162,13 @@ actor NoteTakerAgent {
         }.joined(separator: "\n\n")
 
         // Build current notes summary
-        let currentNotesSummary = buildNotesSummary(currentNotes)
+        let currentNotesSummary = currentNotes.buildSummary()
+
+        // Build sections list for coverage tracking
+        let sectionsList = plan.sections.map { section in
+            let questions = section.questions.map { "  - \($0.text)" }.joined(separator: "\n")
+            return "### \(section.title) (id: \(section.id), \(section.importance) importance)\n\(questions)"
+        }.joined(separator: "\n\n")
 
         let userPrompt = """
         ## Interview Context
@@ -116,6 +176,9 @@ actor NoteTakerAgent {
         **Topic:** \(plan.topic)
         **Research Goal:** \(plan.researchGoal)
         **Angle:** \(plan.angle)
+
+        ## Interview Plan Sections
+        \(sectionsList)
 
         ## Current Notes (from previous analysis)
         \(currentNotesSummary)
@@ -131,7 +194,9 @@ actor NoteTakerAgent {
         3. Any NEW claims or strong opinions (with your assessment of confidence)
         4. Any GAPS - topics touched but not fully explored
         5. Any CONTRADICTIONS - statements that seem to conflict
-        6. Possible essay titles based on the conversation so far
+        6. **SECTION COVERAGE** - For each section in the plan, assess how well it's been covered
+        7. **QUOTABLE LINES** - Capture memorable, vivid, or surprising quotes from the expert
+        8. Possible essay titles based on the conversation so far
 
         Build on the existing notes - don't duplicate what's already captured, but do refine or expand.
         """
@@ -172,34 +237,6 @@ actor NoteTakerAgent {
         return max(0, 1.0 - (elapsed / 30.0))
     }
 
-    // MARK: - Helpers
-
-    private func buildNotesSummary(_ notes: NotesState) -> String {
-        var parts: [String] = []
-
-        if !notes.keyIdeas.isEmpty {
-            parts.append("**Key Ideas:**\n" + notes.keyIdeas.map { "- \($0.text)" }.joined(separator: "\n"))
-        }
-
-        if !notes.stories.isEmpty {
-            parts.append("**Stories:**\n" + notes.stories.map { "- \($0.summary) (Impact: \($0.impact))" }.joined(separator: "\n"))
-        }
-
-        if !notes.claims.isEmpty {
-            parts.append("**Claims:**\n" + notes.claims.map { "- \($0.text) [confidence: \($0.confidence)]" }.joined(separator: "\n"))
-        }
-
-        if !notes.gaps.isEmpty {
-            parts.append("**Gaps:**\n" + notes.gaps.map { "- \($0.description)" }.joined(separator: "\n"))
-        }
-
-        if !notes.contradictions.isEmpty {
-            parts.append("**Contradictions:**\n" + notes.contradictions.map { "- \($0.description)" }.joined(separator: "\n"))
-        }
-
-        return parts.isEmpty ? "(No notes yet)" : parts.joined(separator: "\n\n")
-    }
-
     // MARK: - System Prompt
 
     static let systemPrompt = """
@@ -226,6 +263,25 @@ actor NoteTakerAgent {
 
     **Contradictions** - When the expert says something that seems to conflict with earlier statements. This is often where the most interesting insights hide - the nuance between seemingly contradictory positions.
 
+    **Section Coverage** - For each section in the interview plan, assess:
+    - coverage_quality: "none" | "shallow" | "adequate" | "deep"
+      - "none" = Section hasn't been touched
+      - "shallow" = Mentioned briefly but no substance
+      - "adequate" = Main points covered but room for more
+      - "deep" = Thoroughly explored with examples and nuance
+    - key_points_covered: What specific aspects have been addressed
+    - missing_aspects: What important angles haven't been explored
+    - suggested_followup: If shallow, what question would deepen coverage
+
+    **Quotable Lines** - Capture memorable quotes from the expert. Look for:
+    - Vivid language or surprising phrasing
+    - Strong opinions stated memorably
+    - Origin stories ("It all started when...")
+    - Turning points ("The moment I realized...")
+    - Counterintuitive insights
+    Rate each quote's strength: "good" | "great" | "exceptional"
+    Suggest potential use: "hook" | "section_header" | "pull_quote" | "conclusion" | "tweet"
+
     **Possible Titles** - As patterns emerge, suggest essay titles that capture the angle.
 
     **Guidelines:**
@@ -233,6 +289,7 @@ actor NoteTakerAgent {
     - Focus on what's NEW in this transcript segment
     - Don't duplicate existing notes, but do refine or expand them
     - Prioritize quality over quantity
+    - For quotable lines, use the expert's EXACT words
     """
 
     // MARK: - JSON Schema
@@ -310,13 +367,68 @@ actor NoteTakerAgent {
                     "additionalProperties": false
                 ]
             ],
+            "section_coverage": [
+                "type": "array",
+                "items": [
+                    "type": "object",
+                    "properties": [
+                        "section_id": ["type": "string", "description": "The ID of the section from the plan"],
+                        "section_title": ["type": "string", "description": "The title of the section"],
+                        "coverage_quality": [
+                            "type": "string",
+                            "enum": ["none", "shallow", "adequate", "deep"],
+                            "description": "How thoroughly this section has been covered"
+                        ],
+                        "key_points_covered": [
+                            "type": "array",
+                            "items": ["type": "string"],
+                            "description": "Main points that have been addressed"
+                        ],
+                        "missing_aspects": [
+                            "type": "array",
+                            "items": ["type": "string"],
+                            "description": "Important aspects not yet explored"
+                        ],
+                        "suggested_followup": [
+                            "type": ["string", "null"],
+                            "description": "A follow-up question to deepen coverage (if shallow)"
+                        ]
+                    ],
+                    "required": ["section_id", "section_title", "coverage_quality", "key_points_covered", "missing_aspects", "suggested_followup"],
+                    "additionalProperties": false
+                ],
+                "description": "Coverage assessment for each section in the interview plan"
+            ],
+            "quotable_lines": [
+                "type": "array",
+                "items": [
+                    "type": "object",
+                    "properties": [
+                        "text": ["type": "string", "description": "The exact quote from the expert"],
+                        "potential_use": [
+                            "type": "string",
+                            "enum": ["hook", "section_header", "pull_quote", "conclusion", "tweet"],
+                            "description": "How this quote could be used in the essay"
+                        ],
+                        "topic": ["type": "string", "description": "What this quote is about"],
+                        "strength": [
+                            "type": "string",
+                            "enum": ["good", "great", "exceptional"],
+                            "description": "How memorable or powerful the quote is"
+                        ]
+                    ],
+                    "required": ["text", "potential_use", "topic", "strength"],
+                    "additionalProperties": false
+                ],
+                "description": "Memorable quotes captured from the expert"
+            ],
             "possible_titles": [
                 "type": "array",
                 "items": ["type": "string"],
                 "description": "Potential essay titles based on the conversation"
             ]
         ],
-        "required": ["key_ideas", "stories", "claims", "gaps", "contradictions", "possible_titles"],
+        "required": ["key_ideas", "stories", "claims", "gaps", "contradictions", "section_coverage", "quotable_lines", "possible_titles"],
         "additionalProperties": false
     ]
 }

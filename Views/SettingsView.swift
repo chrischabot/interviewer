@@ -7,6 +7,8 @@ struct SettingsView: View {
     @State private var isValidating = false
     @State private var showAPIKey = false
     @State private var showDeleteConfirmation = false
+    @State private var hasExistingKey = false
+    @State private var isEditingKey = false
 
     private var audioDeviceManager: AudioDeviceManager { AudioDeviceManager.shared }
 
@@ -26,23 +28,57 @@ struct SettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
-                        HStack {
-                            if showAPIKey {
-                                TextField("sk-...", text: $apiKey)
-                                    .textFieldStyle(.roundedBorder)
+                        if hasExistingKey && !isEditingKey {
+                            // Show masked display with edit button
+                            HStack {
+                                Text("sk-•••••••••••••••••••")
                                     .font(.system(.body, design: .monospaced))
-                            } else {
-                                SecureField("sk-...", text: $apiKey)
-                                    .textFieldStyle(.roundedBorder)
-                                    .font(.system(.body, design: .monospaced))
-                            }
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(8)
+                                    .background(Color.primary.opacity(0.05))
+                                    .cornerRadius(6)
+                                    .accessibilityLabel("API key")
+                                    .accessibilityValue("Hidden. Key is saved securely.")
 
-                            Button {
-                                showAPIKey.toggle()
-                            } label: {
-                                Image(systemName: showAPIKey ? "eye.slash" : "eye")
+                                Button("Change") {
+                                    isEditingKey = true
+                                    apiKey = ""
+                                }
+                                .buttonStyle(.bordered)
+                                .accessibilityLabel("Change API key")
+                                .accessibilityHint("Double tap to enter a new API key")
                             }
-                            .buttonStyle(.borderless)
+                        } else {
+                            // Editable field for new/changed key
+                            HStack {
+                                if showAPIKey {
+                                    TextField("sk-...", text: $apiKey)
+                                        .textFieldStyle(.roundedBorder)
+                                        .font(.system(.body, design: .monospaced))
+                                } else {
+                                    SecureField("sk-...", text: $apiKey)
+                                        .textFieldStyle(.roundedBorder)
+                                        .font(.system(.body, design: .monospaced))
+                                }
+
+                                Button {
+                                    showAPIKey.toggle()
+                                } label: {
+                                    Image(systemName: showAPIKey ? "eye.slash" : "eye")
+                                }
+                                .buttonStyle(.borderless)
+                                .accessibilityLabel(showAPIKey ? "Hide API key" : "Show API key")
+                                .accessibilityHint("Double tap to toggle visibility")
+
+                                if isEditingKey {
+                                    Button("Cancel") {
+                                        isEditingKey = false
+                                        apiKey = ""
+                                    }
+                                    .buttonStyle(.borderless)
+                                }
+                            }
                         }
 
                         if let error = appState.apiKeyError {
@@ -51,23 +87,29 @@ struct SettingsView: View {
                                 .foregroundStyle(.red)
                         }
 
-                        HStack {
-                            Button("Save API Key") {
-                                Task {
-                                    await saveAPIKey()
+                        if !hasExistingKey || isEditingKey {
+                            HStack {
+                                Button("Save API Key") {
+                                    Task {
+                                        await saveAPIKey()
+                                    }
                                 }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(apiKey.isEmpty || isValidating)
+
+                                if isValidating {
+                                    ProgressView()
+                                        .scaleEffect(0.8)
+                                }
+
+                                Spacer()
                             }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(apiKey.isEmpty || isValidating)
+                        }
 
-                            if isValidating {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                            }
+                        if hasExistingKey && !isEditingKey {
+                            HStack {
+                                Spacer()
 
-                            Spacer()
-
-                            if appState.hasAPIKey {
                                 Button("Delete Key", role: .destructive) {
                                     showDeleteConfirmation = true
                                 }
@@ -240,13 +282,11 @@ struct SettingsView: View {
 
     private func loadExistingKey() {
         Task {
-            if let existingKey = await appState.getAPIKey() {
-                await MainActor.run {
-                    // Show masked version
-                    if existingKey.count > 8 {
-                        apiKey = String(existingKey.prefix(7)) + "..." + String(existingKey.suffix(4))
-                    }
-                }
+            let keyExists = await appState.getAPIKey() != nil
+            await MainActor.run {
+                hasExistingKey = keyExists
+                isEditingKey = false
+                apiKey = ""
             }
         }
     }
@@ -262,6 +302,8 @@ struct SettingsView: View {
             try await appState.saveAPIKey(apiKey)
             await MainActor.run {
                 apiKey = ""
+                hasExistingKey = true
+                isEditingKey = false
             }
         } catch {
             // Error is handled by appState
@@ -277,6 +319,8 @@ struct SettingsView: View {
             try await appState.deleteAPIKey()
             await MainActor.run {
                 apiKey = ""
+                hasExistingKey = false
+                isEditingKey = false
             }
         } catch {
             // Handle error

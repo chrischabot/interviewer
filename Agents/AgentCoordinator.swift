@@ -34,6 +34,11 @@ actor AgentCoordinator {
     // Agent activity tracking for UI meters
     private var agentActivity: [String: Double] = [:]
 
+    // Transcript windowing configuration to control prompt size
+    private let maxTranscriptEntriesForNotes = 20      // Note-taker gets recent context
+    private let maxTranscriptEntriesForResearch = 20   // Researcher needs enough context to identify topics
+    private let maxTranscriptEntriesForOrchestrator = 30  // Orchestrator needs more for decisions
+
     private init() {
         self.openAIClient = OpenAIClient.shared
         self.plannerAgent = PlannerAgent(client: openAIClient)
@@ -47,12 +52,15 @@ actor AgentCoordinator {
     // MARK: - Session Management
 
     /// Reset state for a new interview session
-    func startNewSession() {
+    func startNewSession() async {
         AgentLogger.sessionStarted()
         accumulatedResearch = []
         askedQuestionIds = []
         agentActivity = [:]
         finalNotes = .empty
+
+        // Reset agent state
+        await researcherAgent.reset()
     }
 
     /// Store final notes when interview ends (for use in post-processing)
@@ -63,6 +71,13 @@ actor AgentCoordinator {
     /// Get the final notes from the session
     func getFinalNotes() -> NotesState {
         finalNotes
+    }
+
+    /// Window transcript to a maximum number of recent entries
+    /// Returns the most recent entries to control prompt size
+    private func windowTranscript(_ transcript: [TranscriptEntry], maxEntries: Int) -> [TranscriptEntry] {
+        guard transcript.count > maxEntries else { return transcript }
+        return Array(transcript.suffix(maxEntries))
     }
 
     /// Mark a question as asked (for tracking coverage)
@@ -88,13 +103,14 @@ actor AgentCoordinator {
 
     /// Process a live update during the interview
     /// Runs NoteTaker and Researcher in parallel, then Orchestrator sequentially
+    /// All agents have graceful fallbacks, so this method never throws
     func processLiveUpdate(
         transcript: [TranscriptEntry],
         currentNotes: NotesState,
         plan: PlanSnapshot,
         elapsedSeconds: Int,
         targetSeconds: Int
-    ) async throws -> LiveUpdateResult {
+    ) async -> LiveUpdateResult {
         let progress = Int(Double(elapsedSeconds) / Double(targetSeconds) * 100)
 
         AgentLogger.liveUpdateStarted(progress: progress, transcriptCount: transcript.count)
@@ -105,19 +121,23 @@ actor AgentCoordinator {
 
         AgentLogger.parallelAgentsStarted()
 
-        // Run NoteTaker and Researcher in parallel
-        async let notesTask = runNoteTaker(
-            transcript: transcript,
+        // Window transcripts for each agent to control prompt size
+        let notesTranscript = windowTranscript(transcript, maxEntries: maxTranscriptEntriesForNotes)
+        let researchTranscript = windowTranscript(transcript, maxEntries: maxTranscriptEntriesForResearch)
+
+        // Run NoteTaker and Researcher in parallel with graceful failure handling
+        async let notesTask = runNoteTakerWithFallback(
+            transcript: notesTranscript,
             currentNotes: currentNotes,
             plan: plan
         )
-        async let researchTask = runResearcher(
-            transcript: transcript,
+        async let researchTask = runResearcherWithFallback(
+            transcript: researchTranscript,
             topic: plan.topic
         )
 
-        // Wait for both to complete
-        let (updatedNotes, newResearchItems) = try await (notesTask, researchTask)
+        // Wait for both to complete - failures return fallback values instead of throwing
+        let (updatedNotes, newResearchItems) = await (notesTask, researchTask)
 
         AgentLogger.parallelAgentsFinished()
 
@@ -129,10 +149,13 @@ actor AgentCoordinator {
         updateActivity(agent: "research", score: 0.5)
         updateActivity(agent: "orchestrator", score: 1.0)
 
-        // Now run Orchestrator with the combined results
+        // Window transcript for orchestrator
+        let orchestratorTranscript = windowTranscript(transcript, maxEntries: maxTranscriptEntriesForOrchestrator)
+
+        // Now run Orchestrator with the combined results (with fallback on failure)
         let context = OrchestratorContext(
             plan: plan,
-            transcript: transcript,
+            transcript: orchestratorTranscript,
             notes: updatedNotes,
             research: accumulatedResearch,
             elapsedSeconds: elapsedSeconds,
@@ -140,7 +163,24 @@ actor AgentCoordinator {
             askedQuestionIds: askedQuestionIds
         )
 
-        let decision = try await orchestratorAgent.decideNextQuestion(context: context)
+        let decision = await runOrchestratorWithFallback(context: context, plan: plan)
+
+        // Mark the question as asked for coverage tracking
+        if let questionId = decision.nextQuestion.sourceQuestionId {
+            markQuestionAsked(questionId)
+            AgentLogger.questionMarkedAsked(questionId: questionId, method: "direct ID")
+        } else if decision.nextQuestion.source == "plan" {
+            // Fallback: Try to match by question text similarity if LLM didn't return ID
+            if let matchedId = findMatchingQuestionId(
+                questionText: decision.nextQuestion.text,
+                in: plan
+            ) {
+                markQuestionAsked(matchedId)
+                AgentLogger.questionMarkedAsked(questionId: matchedId, method: "text match")
+            } else {
+                AgentLogger.info(agent: "Coordinator", message: "Plan question suggested but couldn't match ID - coverage tracking may be incomplete")
+            }
+        }
 
         updateActivity(agent: "orchestrator", score: 0.5)
 
@@ -161,36 +201,105 @@ actor AgentCoordinator {
         )
     }
 
-    // MARK: - Private Agent Runners
+    // MARK: - Private Agent Runners with Fallbacks
 
-    private func runNoteTaker(
+    /// Run NoteTaker with graceful fallback on failure
+    private func runNoteTakerWithFallback(
         transcript: [TranscriptEntry],
         currentNotes: NotesState,
         plan: PlanSnapshot
-    ) async throws -> NotesState {
-        // Create a lightweight Plan-like struct for NoteTaker
-        let planForNotes = Plan(
-            topic: plan.topic,
-            researchGoal: plan.researchGoal,
-            angle: plan.angle,
-            targetSeconds: 0  // Not needed for notes
-        )
-
-        return try await noteTakerAgent.updateNotes(
-            transcript: transcript,
-            currentNotes: currentNotes,
-            plan: planForNotes
-        )
+    ) async -> NotesState {
+        do {
+            return try await noteTakerAgent.updateNotes(
+                transcript: transcript,
+                currentNotes: currentNotes,
+                plan: plan
+            )
+        } catch {
+            AgentLogger.error(agent: "NoteTaker", message: "Failed with error: \(error.localizedDescription). Using previous notes.")
+            // Return current notes unchanged - interview continues with existing insights
+            return currentNotes
+        }
     }
 
-    private func runResearcher(
+    /// Run Researcher with graceful fallback on failure
+    private func runResearcherWithFallback(
         transcript: [TranscriptEntry],
         topic: String
-    ) async throws -> [ResearchItem] {
-        return try await researcherAgent.research(
-            transcript: transcript,
-            existingResearch: accumulatedResearch,
-            topic: topic
+    ) async -> [ResearchItem] {
+        do {
+            return try await researcherAgent.research(
+                transcript: transcript,
+                existingResearch: accumulatedResearch,
+                topic: topic
+            )
+        } catch {
+            AgentLogger.error(agent: "Researcher", message: "Failed with error: \(error.localizedDescription). Skipping research this cycle.")
+            // Return empty array - interview continues without new research
+            return []
+        }
+    }
+
+    /// Run Orchestrator with graceful fallback on failure
+    private func runOrchestratorWithFallback(
+        context: OrchestratorContext,
+        plan: PlanSnapshot
+    ) async -> OrchestratorDecision {
+        do {
+            return try await orchestratorAgent.decideNextQuestion(context: context)
+        } catch {
+            AgentLogger.error(agent: "Orchestrator", message: "Failed with error: \(error.localizedDescription). Using fallback decision.")
+            // Fallback: Pick the first unasked P1 question from the plan
+            return createFallbackDecision(from: plan, context: context)
+        }
+    }
+
+    /// Create a simple fallback decision when Orchestrator fails
+    private func createFallbackDecision(from plan: PlanSnapshot, context: OrchestratorContext) -> OrchestratorDecision {
+        // Determine phase based on time
+        let progress = Double(context.elapsedSeconds) / Double(context.targetSeconds)
+        let phase: String
+        if progress < 0.15 {
+            phase = "opening"
+        } else if progress > 0.85 {
+            phase = "wrap_up"
+        } else {
+            phase = "deep_dive"
+        }
+
+        // Find first unasked question, prioritizing P1
+        var fallbackQuestion: (text: String, sectionId: String, questionId: String)?
+
+        for priority in 1...3 {
+            for section in plan.sections {
+                for question in section.questions where question.priority == priority {
+                    if !askedQuestionIds.contains(question.id) {
+                        fallbackQuestion = (question.text, section.id, question.id)
+                        break
+                    }
+                }
+                if fallbackQuestion != nil { break }
+            }
+            if fallbackQuestion != nil { break }
+        }
+
+        // If all questions asked, use a generic wrap-up
+        let (questionText, sectionId, questionId) = fallbackQuestion ?? (
+            "Is there anything else you'd like to add that we haven't covered?",
+            plan.sections.first?.id ?? "",
+            ""
+        )
+
+        return OrchestratorDecision(
+            phase: phase,
+            nextQuestion: NextQuestion(
+                text: questionText,
+                targetSectionId: sectionId,
+                source: fallbackQuestion != nil ? "plan" : "gap",
+                sourceQuestionId: fallbackQuestion != nil ? questionId : nil,
+                expectedAnswerSeconds: 60
+            ),
+            interviewerBrief: "Ask naturally and listen carefully. (Note: Using fallback due to agent error)"
         )
     }
 
@@ -238,6 +347,51 @@ actor AgentCoordinator {
         }
 
         return instructions
+    }
+
+    // MARK: - Question Matching
+
+    /// Fallback matching when LLM doesn't return sourceQuestionId
+    /// Uses simple text similarity to find the best matching plan question
+    private func findMatchingQuestionId(questionText: String, in plan: PlanSnapshot) -> String? {
+        let normalizedQuestion = questionText.lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var bestMatch: (id: String, score: Double)?
+
+        for section in plan.sections {
+            for question in section.questions {
+                // Skip already-asked questions
+                guard !askedQuestionIds.contains(question.id) else { continue }
+
+                let normalizedPlan = question.text.lowercased()
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+
+                // Calculate similarity score
+                let score = calculateSimilarity(normalizedQuestion, normalizedPlan)
+
+                if score > 0.6 {  // Threshold for match
+                    if bestMatch == nil || score > bestMatch!.score {
+                        bestMatch = (question.id, score)
+                    }
+                }
+            }
+        }
+
+        return bestMatch?.id
+    }
+
+    /// Simple word-based similarity (Jaccard-like)
+    private func calculateSimilarity(_ text1: String, _ text2: String) -> Double {
+        let words1 = Set(text1.components(separatedBy: .whitespaces).filter { $0.count > 2 })
+        let words2 = Set(text2.components(separatedBy: .whitespaces).filter { $0.count > 2 })
+
+        guard !words1.isEmpty && !words2.isEmpty else { return 0 }
+
+        let intersection = words1.intersection(words2).count
+        let union = words1.union(words2).count
+
+        return Double(intersection) / Double(union)
     }
 
     // MARK: - Activity Tracking

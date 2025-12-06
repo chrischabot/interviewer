@@ -1,6 +1,6 @@
 import SwiftUI
 
-// MARK: - Plasma Orb View
+// MARK: - Plasma Orb View (Original)
 
 /// A flowing plasma orb visualization that responds to audio levels.
 /// Plasma tendrils flow slowly like a lava lamp, then excite with voice.
@@ -74,6 +74,23 @@ struct VoiceOrbView: View {
             }
         }
         .frame(width: 80, height: 80)
+        // MARK: - Accessibility
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Voice indicator")
+        .accessibilityValue(accessibilityStateDescription)
+        .accessibilityAddTraits(.updatesFrequently)
+    }
+
+    /// Describes the current state for VoiceOver
+    private var accessibilityStateDescription: String {
+        if isActive {
+            let volumeDescription = clampedLevel > 0.6 ? "speaking loudly" : clampedLevel > 0.3 ? "speaking" : "speaking softly"
+            return "AI is \(volumeDescription)"
+        } else if isListening {
+            return "Listening for your voice"
+        } else {
+            return "Idle, ready to start"
+        }
     }
 
     // MARK: - Glow
@@ -291,12 +308,9 @@ struct VoiceOrbView: View {
             )
         )
     }
-
 }
 
-// MARK: - Preview
-
-#Preview("Plasma Orb") {
+#Preview {
     VStack(spacing: 40) {
         HStack(spacing: 40) {
             VStack {

@@ -9,6 +9,7 @@ enum OpenAIError: Error, LocalizedError {
     case httpError(statusCode: Int, message: String?)
     case decodingError(Error)
     case networkError(Error)
+    case maxRetriesExceeded(lastError: Error)
 
     var errorDescription: String? {
         switch self {
@@ -24,6 +25,21 @@ enum OpenAIError: Error, LocalizedError {
             return "Failed to decode response: \(error.localizedDescription)"
         case .networkError(let error):
             return "Network error: \(error.localizedDescription)"
+        case .maxRetriesExceeded(let lastError):
+            return "Request failed after retries: \(lastError.localizedDescription)"
+        }
+    }
+
+    /// Whether this error is potentially transient and worth retrying
+    var isRetryable: Bool {
+        switch self {
+        case .httpError(let statusCode, _):
+            // Retry on rate limit (429), server errors (5xx)
+            return statusCode == 429 || (statusCode >= 500 && statusCode < 600)
+        case .networkError:
+            return true
+        default:
+            return false
         }
     }
 }
@@ -318,6 +334,12 @@ actor OpenAIClient {
         self.session = URLSession(configuration: config)
     }
 
+    // MARK: - Retry Configuration
+
+    private let maxRetries = 3
+    private let baseDelaySeconds: Double = 1.0
+    private let maxDelaySeconds: Double = 30.0
+
     // MARK: - API Key
 
     private func getAPIKey() async throws -> String {
@@ -325,6 +347,42 @@ actor OpenAIClient {
             throw OpenAIError.noAPIKey
         }
         return key
+    }
+
+    // MARK: - Retry Logic
+
+    /// Execute an async operation with exponential backoff retry
+    private func withRetry<T>(
+        operation: () async throws -> T
+    ) async throws -> T {
+        var lastError: Error = OpenAIError.invalidResponse
+        var delay = baseDelaySeconds
+
+        for attempt in 0..<maxRetries {
+            do {
+                return try await operation()
+            } catch let error as OpenAIError where error.isRetryable {
+                lastError = error
+                let attemptNumber = attempt + 1
+
+                if attemptNumber < maxRetries {
+                    // Add jitter to prevent thundering herd
+                    let jitter = Double.random(in: 0...0.5)
+                    let sleepDuration = min(delay + jitter, maxDelaySeconds)
+
+                    NSLog("[OpenAI] ⚠️ Attempt %d failed (%@), retrying in %.1fs...",
+                          attemptNumber, error.localizedDescription, sleepDuration)
+
+                    try await Task.sleep(for: .seconds(sleepDuration))
+                    delay *= 2  // Exponential backoff
+                }
+            } catch {
+                // Non-retryable error, throw immediately
+                throw error
+            }
+        }
+
+        throw OpenAIError.maxRetriesExceeded(lastError: lastError)
     }
 
     // MARK: - Chat Completions
@@ -336,17 +394,14 @@ actor OpenAIClient {
         tools: [Tool]? = nil,
         maxTokens: Int? = nil
     ) async throws -> ChatCompletionResponse {
+        // Get API key outside of retry loop (no need to retry auth errors)
         let apiKey = try await getAPIKey()
 
         guard let url = URL(string: "\(baseURL)/chat/completions") else {
             throw OpenAIError.invalidURL
         }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-
+        // Build request body once outside retry loop
         let requestBody = ChatCompletionRequest(
             model: model,
             messages: messages,
@@ -356,29 +411,38 @@ actor OpenAIClient {
         )
 
         let encoder = JSONEncoder()
-        request.httpBody = try encoder.encode(requestBody)
+        let bodyData = try encoder.encode(requestBody)
 
-        let (data, response) = try await session.data(for: request)
+        // Wrap the network request in retry logic
+        return try await withRetry { [session] in
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            request.httpBody = bodyData
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw OpenAIError.invalidResponse
-        }
+            let (data, response) = try await session.data(for: request)
 
-        if httpResponse.statusCode != 200 {
-            let errorMessage: String?
-            if let errorResponse = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data) {
-                errorMessage = errorResponse.error.message
-            } else {
-                errorMessage = String(data: data, encoding: .utf8)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw OpenAIError.invalidResponse
             }
-            throw OpenAIError.httpError(statusCode: httpResponse.statusCode, message: errorMessage)
-        }
 
-        do {
-            let decoder = JSONDecoder()
-            return try decoder.decode(ChatCompletionResponse.self, from: data)
-        } catch {
-            throw OpenAIError.decodingError(error)
+            if httpResponse.statusCode != 200 {
+                let errorMessage: String?
+                if let errorResponse = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data) {
+                    errorMessage = errorResponse.error.message
+                } else {
+                    errorMessage = String(data: data, encoding: .utf8)
+                }
+                throw OpenAIError.httpError(statusCode: httpResponse.statusCode, message: errorMessage)
+            }
+
+            do {
+                let decoder = JSONDecoder()
+                return try decoder.decode(ChatCompletionResponse.self, from: data)
+            } catch {
+                throw OpenAIError.decodingError(error)
+            }
         }
     }
 

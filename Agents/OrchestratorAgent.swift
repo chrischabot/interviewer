@@ -109,19 +109,20 @@ actor OrchestratorAgent {
             return "[\(speaker)]: \(entry.text)"
         }.joined(separator: "\n\n")
 
-        // Build plan summary with question coverage
+        // Build plan summary with question coverage - INCLUDE IDs so LLM can return them
         var planSummary = ""
         for section in context.plan.sections {
             let sectionAsked = section.questions.filter { context.askedQuestionIds.contains($0.id) }.count
             let sectionTotal = section.questions.count
             planSummary += """
 
-            ### \(section.title) [\(sectionAsked)/\(sectionTotal) asked, \(section.importance) importance]
+            ### \(section.title) (section_id: \(section.id)) [\(sectionAsked)/\(sectionTotal) asked, \(section.importance) importance]
 
             """
             for q in section.questions {
-                let status = context.askedQuestionIds.contains(q.id) ? "✓" : "○"
-                planSummary += "  \(status) [P\(q.priority)] \(q.text)\n"
+                let status = context.askedQuestionIds.contains(q.id) ? "✓ ASKED" : "○ NOT ASKED"
+                // Include question ID so the model can reference it in source_question_id
+                planSummary += "  \(status) [id: \(q.id)] [P\(q.priority)] \(q.text)\n"
             }
         }
 
@@ -244,12 +245,18 @@ actor OrchestratorAgent {
     - `research` - Incorporating research insights
 
     **Guidelines:**
-    - Prioritize P1 questions - these are must-hit
-    - Don't ask questions that have already been answered
+    - Prioritize P1 questions marked "○ NOT ASKED" - these are must-hit
+    - NEVER suggest questions marked "✓ ASKED" - those have already been covered
     - When following up, reference what the expert said: "You mentioned X..."
     - Provide a brief for the interviewer on HOW to ask the question (tone, framing)
     - Keep the conversation flowing naturally - don't make it feel like an interrogation
     - If the expert is on a great tangent, suggest letting them continue before redirecting
+
+    **CRITICAL - Question Tracking:**
+    - Each question in the plan has a unique `id` shown in brackets like `[id: ABC123]`
+    - When you choose a question from the plan, you MUST set `source_question_id` to that exact ID
+    - This is how we track coverage - if you don't return the ID, we can't mark it as asked
+    - For gap/contradiction/research questions, set `source_question_id` to null
     """
 
     // MARK: - JSON Schema
@@ -272,12 +279,16 @@ actor OrchestratorAgent {
                         "enum": ["plan", "gap", "contradiction", "research"],
                         "description": "What prompted this question"
                     ],
+                    "source_question_id": [
+                        "type": ["string", "null"],
+                        "description": "ID of the original plan question if source is 'plan', null otherwise"
+                    ],
                     "expected_answer_seconds": [
                         "type": "integer",
                         "description": "Estimated time for the expert to answer (30-120 seconds typical)"
                     ]
                 ],
-                "required": ["text", "target_section_id", "source", "expected_answer_seconds"],
+                "required": ["text", "target_section_id", "source", "source_question_id", "expected_answer_seconds"],
                 "additionalProperties": false
             ],
             "interviewer_brief": [

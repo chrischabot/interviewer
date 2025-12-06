@@ -62,7 +62,8 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
     private var audioLevelTimer: Timer?
     private var agentTimer: Timer?  // Periodic agent processing
     private var currentAssistantEntry: TranscriptEntry?
-    private var pendingAssistantText: String = ""  // Accumulate transcript until audio done
+    private var pendingAssistantText: String = ""  // Accumulate assistant transcript until audio done
+    private var pendingUserText: String = ""  // Accumulate user transcript during speech
     private var lastAssistantAudioAt: Date?  // Track when last AI audio chunk was received
     private let audioBleedGuardSeconds: TimeInterval = 2.0  // Delay after last audio chunk before resuming mic
     var isMicMuted: Bool { isAssistantSpeaking || isInBleedGuardPeriod }  // Exposed for UI
@@ -74,21 +75,44 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
     private var hasSentAudioSinceLastResponse = false  // Track if we've sent audio (to avoid empty buffer error)
     private let agentProcessingInterval: TimeInterval = 10.0  // Process agents every 10 seconds
     private var planSnapshot: PlanSnapshot?  // Cached snapshot for agent processing
+    private var delegatesConfigured = false
+    private var hasDetectedClosing = false  // Track if we've seen a closing statement
+    private var closingDetectedAt: Date?  // When closing was detected
+
+    // Phrases that indicate the interview is ending
+    private let closingPhrases = [
+        "thank you for sharing",
+        "thanks for sharing",
+        "thank you so much for",
+        "it was great talking",
+        "wonderful talking with you",
+        "take care",
+        "goodbye",
+        "good bye",
+        "that's all the time",
+        "we're out of time",
+        "wrap up our conversation",
+        "bring our conversation to a close",
+        "final thoughts"
+    ]
 
     init() {
-        Task {
-            await setupDelegates()
-        }
+        // Set synchronous delegate immediately
+        audioEngine.delegate = self
     }
 
-    private func setupDelegates() async {
+    private func ensureDelegatesConfigured() async {
+        guard !delegatesConfigured else { return }
         await realtimeClient.setDelegate(self)
-        audioEngine.delegate = self
+        delegatesConfigured = true
     }
 
     // MARK: - Session Control
 
     func startSession(plan: Plan) async {
+        // Ensure delegates are configured before starting
+        await ensureDelegatesConfigured()
+
         NSLog("[InterviewSession] 🎬 Starting session for plan: %@", plan.topic)
 
         self.plan = plan
@@ -97,7 +121,12 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
         self.elapsedSeconds = 0
         self.errorMessage = nil
         self.isAssistantSpeaking = true  // AI will start speaking immediately with greeting
+        self.isUserSpeaking = false
         self.lastAssistantAudioAt = Date()  // Pretend we just received audio to block mic initially
+        self.pendingAssistantText = ""
+        self.pendingUserText = ""
+        self.hasDetectedClosing = false
+        self.closingDetectedAt = nil
 
         // Reset agent state
         self.currentNotes = .empty
@@ -146,6 +175,9 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
             NSLog("[InterviewSession] ✅ Session is now active!")
         } catch {
             NSLog("[InterviewSession] ❌ Error starting session: %@", String(describing: error))
+            // Clean up any partially started resources
+            stopTimer()
+            audioEngine.shutdown()
             errorMessage = error.localizedDescription
             state = .idle
         }
@@ -248,36 +280,37 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
         isProcessingAgents = true
         NSLog("[InterviewSession] 🤖 Starting agent processing cycle...")
 
+        // Process live update - this never throws due to graceful fallbacks
+        let result = await AgentCoordinator.shared.processLiveUpdate(
+            transcript: transcript,
+            currentNotes: currentNotes,
+            plan: snapshot,
+            elapsedSeconds: elapsedSeconds,
+            targetSeconds: targetSeconds
+        )
+
+        // Update state with results
+        currentNotes = result.notes
+        researchItems.append(contentsOf: result.newResearchItems)
+        latestDecision = result.decision
+        currentPhase = result.decision.phase
+        currentQuestion = result.decision.nextQuestion.text
+
+        // Update agent activity from coordinator
+        agentActivity = await AgentCoordinator.shared.getAgentActivity()
+
+        // Update Realtime API instructions with new guidance
+        // This can still fail (network issues), but we handle gracefully
         do {
-            let result = try await AgentCoordinator.shared.processLiveUpdate(
-                transcript: transcript,
-                currentNotes: currentNotes,
-                plan: snapshot,
-                elapsedSeconds: elapsedSeconds,
-                targetSeconds: targetSeconds
-            )
-
-            // Update state with results
-            currentNotes = result.notes
-            researchItems.append(contentsOf: result.newResearchItems)
-            latestDecision = result.decision
-            currentPhase = result.decision.phase
-            currentQuestion = result.decision.nextQuestion.text
-
-            // Update agent activity from coordinator
-            agentActivity = await AgentCoordinator.shared.getAgentActivity()
-
-            // Update Realtime API instructions with new guidance
             try await realtimeClient.updateInstructions(result.interviewerInstructions)
-
-            NSLog("[InterviewSession] ✅ Agent processing complete - Phase: %@, Next Q: %@",
-                  result.decision.phase,
-                  String(result.decision.nextQuestion.text.prefix(50)))
-
         } catch {
-            NSLog("[InterviewSession] ⚠️ Agent processing error: %@", error.localizedDescription)
-            // Don't surface to UI - agent failures shouldn't interrupt the interview
+            NSLog("[InterviewSession] ⚠️ Failed to update Realtime instructions: %@", error.localizedDescription)
+            // Interview continues with existing instructions
         }
+
+        NSLog("[InterviewSession] ✅ Agent processing complete - Phase: %@, Next Q: %@",
+              result.decision.phase,
+              String(result.decision.nextQuestion.text.prefix(50)))
 
         isProcessingAgents = false
     }
@@ -415,7 +448,7 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
             if speaker == "assistant" {
                 if isFinal {
                     // Final transcript - mark the current entry as final
-                    NSLog("[Session] ✅ Final transcript received, length: %d", text.count)
+                    NSLog("[Session] ✅ Final assistant transcript received, length: %d", text.count)
 
                     // Update the current streaming entry to final, or create one if needed
                     if let index = self.transcript.lastIndex(where: { $0.speaker == "assistant" && !$0.isFinal }) {
@@ -431,6 +464,9 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
                     // Reset speaking state
                     self.pendingAssistantText = ""
                     self.isAssistantSpeaking = false
+
+                    // Check for closing statement
+                    self.checkForClosingStatement(text)
                 } else {
                     // Delta - stream text as it comes in
                     self.pendingAssistantText += text
@@ -445,8 +481,41 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
                         self.transcript.append(entry)
                     }
                 }
+            } else if speaker == "user" {
+                // Capture user speech for agents and analysis
+                if isFinal {
+                    NSLog("[Session] 🎤 Final user transcript received, length: %d", text.count)
+
+                    // Update the current streaming entry to final, or create one if needed
+                    if let index = self.transcript.lastIndex(where: { $0.speaker == "user" && !$0.isFinal }) {
+                        var updatedEntry = self.transcript[index]
+                        updatedEntry.text = text
+                        updatedEntry.isFinal = true
+                        self.transcript[index] = updatedEntry
+                    } else if !text.isEmpty {
+                        let entry = TranscriptEntry(speaker: speaker, text: text, timestamp: Date(), isFinal: true)
+                        self.transcript.append(entry)
+                    }
+
+                    // Update user speaking state
+                    self.pendingUserText = ""
+                    self.isUserSpeaking = false
+                } else {
+                    // Delta - stream text as it comes in
+                    self.pendingUserText += text
+                    self.isUserSpeaking = true
+
+                    // Update or create streaming entry
+                    if let index = self.transcript.lastIndex(where: { $0.speaker == "user" && !$0.isFinal }) {
+                        var updatedEntry = self.transcript[index]
+                        updatedEntry.text = self.pendingUserText
+                        self.transcript[index] = updatedEntry
+                    } else {
+                        let entry = TranscriptEntry(speaker: speaker, text: self.pendingUserText, timestamp: Date(), isFinal: false)
+                        self.transcript.append(entry)
+                    }
+                }
             }
-            // Note: We no longer track user text in the transcript (UI shows interviewer only)
         }
     }
 
@@ -473,18 +542,26 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
     nonisolated func audioEngine(_ engine: AudioEngine, didCaptureAudio data: Data) async {
         // Skip sending audio while assistant is speaking (or recently stopped) to prevent audio bleed
         // (microphone picking up speaker output)
-        let (shouldSkip, reason) = await MainActor.run { () -> (Bool, String) in
+        let shouldSkip = await MainActor.run { () -> Bool in
+            // Don't send audio if session is ending or ended
+            if self.state == .ending || self.state == .ended || self.state == .idle {
+                return true
+            }
+            // Don't send audio if we've detected a closing statement (interview is about to end)
+            if self.hasDetectedClosing {
+                return true
+            }
             if self.isAssistantSpeaking {
-                return (true, "assistant speaking")
+                return true
             }
             // Also skip for a short period after last audio chunk (audio still playing from buffer)
             if let lastAudioAt = self.lastAssistantAudioAt {
                 let elapsed = Date().timeIntervalSince(lastAudioAt)
                 if elapsed < self.audioBleedGuardSeconds {
-                    return (true, String(format: "bleed guard (%.1fs remaining)", self.audioBleedGuardSeconds - elapsed))
+                    return true
                 }
             }
-            return (false, "")
+            return false
         }
 
         if shouldSkip {
@@ -497,9 +574,13 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
                 self.hasSentAudioSinceLastResponse = true
             }
         } catch {
-            NSLog("[AudioCapture] ❌ Failed to send audio: %@", error.localizedDescription)
-            await MainActor.run {
-                self.errorMessage = error.localizedDescription
+            // Only show error if session is still active (not ending/ended)
+            let isStillActive = await MainActor.run { self.state == .active }
+            if isStillActive {
+                NSLog("[AudioCapture] ❌ Failed to send audio: %@", error.localizedDescription)
+                await MainActor.run {
+                    self.errorMessage = error.localizedDescription
+                }
             }
         }
     }
@@ -510,6 +591,45 @@ final class InterviewSessionManager: RealtimeClientDelegate, AudioEngineDelegate
 
     nonisolated func audioEngineDidStopCapturing(_ engine: AudioEngine) async {
         // Capture stopped
+    }
+
+    // MARK: - Closing Detection
+
+    private func checkForClosingStatement(_ text: String) {
+        // Only check if we're in wrap_up phase or past target time
+        let shouldCheck = currentPhase == "wrap_up" || elapsedSeconds >= targetSeconds - 60
+
+        guard shouldCheck else { return }
+        guard !hasDetectedClosing else { return }  // Already detected
+
+        let lowerText = text.lowercased()
+
+        for phrase in closingPhrases {
+            if lowerText.contains(phrase) {
+                NSLog("[InterviewSession] 🏁 Detected closing phrase: \"%@\"", phrase)
+                hasDetectedClosing = true
+                closingDetectedAt = Date()
+
+                // Schedule automatic end after a brief delay (let the audio finish)
+                Task {
+                    try? await Task.sleep(for: .seconds(3))
+                    await self.autoEndIfStillClosing()
+                }
+                break
+            }
+        }
+    }
+
+    private func autoEndIfStillClosing() async {
+        // Only auto-end if we're still in active state and closing was detected
+        guard state == .active, hasDetectedClosing else { return }
+
+        // Check that it's been at least 2 seconds since closing was detected
+        if let closingTime = closingDetectedAt,
+           Date().timeIntervalSince(closingTime) >= 2.0 {
+            NSLog("[InterviewSession] 🎬 Auto-ending interview after closing statement")
+            await endSession()
+        }
     }
 }
 
