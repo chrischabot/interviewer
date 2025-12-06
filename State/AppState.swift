@@ -1,6 +1,5 @@
 import SwiftUI
 import Observation
-import AnthropicSwift
 
 // MARK: - Navigation State
 
@@ -26,18 +25,14 @@ final class AppState {
     var navigationPath = NavigationPath()
     var showSettings = false
 
-    // MARK: - API Key State
+    // MARK: - API Key State (OpenAI only)
 
     var hasAPIKey = false
     var isCheckingAPIKey = false
     var apiKeyError: String?
-    var selectedProvider: LLMProvider?
     var openAIValid = false
-    var anthropicValid = false
     var openAIError: String?
-    var anthropicError: String?
     var openAIKeyCached: String?
-    var anthropicKeyCached: String?
 
     // MARK: - Loading States
 
@@ -50,153 +45,72 @@ final class AppState {
     var currentAnalysis: AnalysisSummary?
 
     private init() {
-        Task {
-            await bootstrapKeys()
-        }
+        Task { await bootstrapKeys() }
     }
 
-    // MARK: - API Key Management & Provider Selection
+    // MARK: - API Key Management
 
     private func bootstrapKeys() async {
         isCheckingAPIKey = true
         defer { isCheckingAPIKey = false }
 
         // Load from keychain
-        if let keys = try? await KeychainManager.shared.loadAllKeys() {
-            openAIKeyCached = keys.openAI
-            anthropicKeyCached = keys.anthropic
-        }
+        openAIKeyCached = try? await KeychainManager.shared.currentOpenAIKey()
 
         // If missing, try environment prefill
-        if openAIKeyCached == nil, let envKey = ProcessInfo.processInfo.environment["OPENAI_API_KEY"], !envKey.isEmpty {
+        if openAIKeyCached == nil,
+           let envKey = ProcessInfo.processInfo.environment["OPENAI_API_KEY"],
+           !envKey.isEmpty {
             try? await KeychainManager.shared.saveAPIKey(envKey)
             openAIKeyCached = envKey
         }
-        if anthropicKeyCached == nil, let envKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"], !envKey.isEmpty {
-            try? await KeychainManager.shared.saveAnthropicKey(envKey)
-            anthropicKeyCached = envKey
-        }
 
-        await validateAvailableProviders()
-        updateSelectionBasedOnValidity()
+        await validateKey()
         await applyProviderToAgents()
 
-        if !hasAPIKey {
-            showSettings = true
-        }
-    }
-
-    func saveAPIKey(_ key: String, provider: LLMProvider) async {
-        switch provider {
-        case .openAI:
-            openAIError = nil
-            do {
-                try await KeychainManager.shared.saveAPIKey(key)
-                openAIKeyCached = key
-                openAIValid = try await OpenAIClient.shared.validateAPIKey()
-            } catch {
-                openAIValid = false
-                openAIError = error.localizedDescription
-            }
-        case .anthropic:
-            anthropicError = nil
-            do {
-                try await KeychainManager.shared.saveAnthropicKey(key)
-                anthropicKeyCached = key
-                anthropicValid = try await validateAnthropicKey(key: key)
-            } catch {
-                anthropicValid = false
-                anthropicError = error.localizedDescription
-            }
-        }
-        updateSelectionBasedOnValidity()
-        await applyProviderToAgents()
-    }
-
-    func deleteAPIKey(provider: LLMProvider) async {
-        switch provider {
-        case .openAI:
-            try? await KeychainManager.shared.deleteAPIKey()
-            openAIKeyCached = nil
-            openAIValid = false
-        case .anthropic:
-            try? await KeychainManager.shared.deleteAnthropicKey()
-            anthropicKeyCached = nil
-            anthropicValid = false
-        }
-        updateSelectionBasedOnValidity()
-        await applyProviderToAgents()
         if !hasAPIKey { showSettings = true }
     }
 
-    private func validateAvailableProviders() async {
-        if let key = openAIKeyCached, !key.isEmpty {
-            openAIValid = (try? await OpenAIClient.shared.validateAPIKey()) ?? false
-        }
-        if let key = anthropicKeyCached, !key.isEmpty {
-            anthropicValid = (try? await validateAnthropicKey(key: key)) ?? false
-        }
-    }
-
-    private func validateAnthropicKey(key: String) async throws -> Bool {
-        let client = AnthropicClient(apiKey: key)
+    func saveAPIKey(_ key: String) async {
+        openAIError = nil
         do {
-            _ = try await client.models.list()
-            return true
+            try await KeychainManager.shared.saveAPIKey(key)
+            openAIKeyCached = key
+            openAIValid = try await OpenAIClient.shared.validateAPIKey()
         } catch {
-            return false
+            openAIValid = false
+            openAIError = error.localizedDescription
         }
-    }
-
-    private func updateSelectionBasedOnValidity() {
-        if openAIValid && anthropicValid {
-            if selectedProvider == nil { selectedProvider = .openAI }
-            hasAPIKey = true
-        } else if openAIValid {
-            selectedProvider = .openAI
-            hasAPIKey = true
-        } else if anthropicValid {
-            selectedProvider = .anthropic
-            hasAPIKey = true
-        } else {
-            selectedProvider = nil
-            hasAPIKey = false
-        }
-    }
-
-    func selectProvider(_ provider: LLMProvider) async {
-        selectedProvider = provider
         await applyProviderToAgents()
     }
 
-    private func applyProviderToAgents() async {
-        guard let provider = selectedProvider else {
-            hasAPIKey = false
-            return
-        }
+    func deleteAPIKey() async {
+        try? await KeychainManager.shared.deleteAPIKey()
+        openAIKeyCached = nil
+        openAIValid = false
+        hasAPIKey = false
+        showSettings = true
+    }
 
-        let modelConfig = LLMModelResolver.config(for: provider)
-        switch provider {
-        case .openAI:
-            guard openAIValid else { hasAPIKey = false; return }
-            let adapter = OpenAIAdapter()
-            await AgentCoordinator.shared.updateLLM(client: adapter, modelConfig: modelConfig, provider: provider)
-            hasAPIKey = true
-        case .anthropic:
-            guard anthropicValid, let key = anthropicKeyCached else { hasAPIKey = false; return }
-            let adapter = AnthropicAdapter(apiKey: key)
-            await AgentCoordinator.shared.updateLLM(client: adapter, modelConfig: modelConfig, provider: provider)
-            hasAPIKey = true
+    private func validateKey() async {
+        if let key = openAIKeyCached, !key.isEmpty {
+            openAIValid = (try? await OpenAIClient.shared.validateAPIKey()) ?? false
+        } else {
+            openAIValid = false
         }
     }
 
-    // MARK: - Navigation Helpers
+    private func applyProviderToAgents() async {
+        let modelConfig = LLMModelResolver.config(for: .openAI)
+        guard openAIValid else { hasAPIKey = false; return }
+        let adapter = OpenAIAdapter()
+        await AgentCoordinator.shared.updateLLM(client: adapter, modelConfig: modelConfig)
+        hasAPIKey = true
+    }
+
+    // MARK: - Navigation helpers
 
     func navigate(to destination: NavigationDestination) {
-        navigationPath.append(destination)
-    }
-
-    func navigateTo(_ destination: NavigationDestination) {
         navigationPath.append(destination)
     }
 
@@ -206,20 +120,7 @@ final class AppState {
         }
     }
 
-    func popNavigation() {
-        if !navigationPath.isEmpty {
-            navigationPath.removeLast()
-        }
-    }
-
     func resetNavigation() {
         navigationPath = NavigationPath()
-    }
-
-    // MARK: - Loading Helpers
-
-    func setLoading(_ loading: Bool, message: String? = nil) {
-        isLoading = loading
-        loadingMessage = message
     }
 }

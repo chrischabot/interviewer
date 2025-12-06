@@ -98,21 +98,28 @@ actor WriterAgent {
         \(styleGuidance(for: style))
 
         **Hard constraints (apply in every style):**
+        - Use the AUTHOR'S own wording and turns of phrase where possible; stay true to their voice.
+        - Use ONLY details present in the transcript, analysis summary, or provided quotes. Do not invent locations, people, events, or examples. If a detail is not in the provided materials, leave it out.
+        - Every section must include at least one grounded detail (quote, paraphrase, or specific fact) from the transcript/analysis. No fictional scenes.
         - No em dashes or double hyphens; use commas or periods instead.
-        - No overly formal or neutral tone; keep it warm and human.
-        - Vary sentence length and rhythm; avoid repetitive cadence.
+        - No overly formal or neutral tone; keep it warm, human, companionable.
+        - Avoid staccato, slogan-like one-liners; most paragraphs should be 3–6 sentences that flow.
+        - Vary sentence length naturally (mix short/medium), but avoid rapid-fire declarative bursts.
         - Avoid signposting and empty summaries (e.g., "In conclusion," "It's important to note").
         - Avoid "AI-sounding" vocabulary like "delve," "crucial/vital," "tapestry," "ever-evolving/dynamic," "it's important to note/remember/consider," "a stark reminder."
+        - Limit rhetorical questions and exclamations; aim for calm, invitational prose.
 
         **Requirements:**
 
         1. **Use first person throughout** - "I learned...", "In my experience...", "Here's what I discovered..."
         2. **Use the suggested title** "\(analysis.suggestedTitle)" (or improve it)
-        3. **Open with a hook** - A surprising insight, a vivid scene, or a provocative question
-        4. **Preserve the author's voice** - Use their vocabulary, their turns of phrase, their way of building arguments
-        5. **Structure around main claims** - Each major point should have supporting stories/evidence from the transcript
-        6. **Acknowledge tensions** - Where nuance was expressed, reflect that complexity
-        7. **End with resonance** - A call to action or reflection that lingers
+        3. **Open with an inviting human moment** - a gentle scene, a concrete image, or a warm observation (not hype, not fiction).
+        4. **Preserve the author's voice** - Use their vocabulary, phrasing, pacing, and argument style from the transcript.
+        5. **Ground every point** - include specific details or quotes from the transcript/analysis; if a point cannot be grounded, omit it.
+        6. **Weave claims into narrative flow** - Integrate evidence/stories so sections feel like connected conversations, not bullets.
+        7. **Acknowledge tensions** - Where nuance was expressed, reflect that complexity.
+        8. **End with resonance** - A reflective close that lingers; calm, not salesy.
+        9. **Paragraph shape** - Avoid single-sentence paragraphs (except a final grace note). Aim 3–6 sentences per paragraph with connective tissue ("because," "so," "meanwhile," "however," "in that moment").
 
         Output the essay as clean markdown with:
         - # for the main title
@@ -289,32 +296,31 @@ actor WriterAgent {
         switch style {
         case .standard:
             return """
-            - Elegant prose with clear narrative arc
-            - Varied sentence rhythm (short + flowing)
-            - Personal stories woven with broader insights
-            - The confident voice of someone sharing what they've learned
+            - Warm, companionable prose with a clear arc
+            - Flowing sentences that connect ideas; avoid slogan-like bursts
+            - Personal stories woven with insights; invite the reader in
+            - Sound like the AUTHOR at an unhurried fireside chat
             """
         case .punchy:
             return """
-            - Direct, energetic, slightly provocative
-            - Short paragraphs. Sharp observations.
-            - Lead with the most surprising insight
-            - Write like you're the smartest person at the party and you know it
+            - Crisp but still warm; no aggression, no hype
+            - Paragraphs still 3–5 sentences; connective phrasing over punchlines
+            - Let sharp observations land inside flowing paragraphs
+            - Sound like the AUTHOR when they're lively with a friend, not pitching
             """
         case .reflective:
             return """
-            - Thoughtful, contemplative pace
-            - Room to explore nuance and complexity
-            - Insights that unfold gradually
-            - The wisdom of someone who's earned their perspective
+            - Thoughtful, contemplative pace with descriptive connective tissue
+            - Linger on moments; let insights unfold gradually
+            - Embrace nuance and complexity without rushing
+            - Sound like the AUTHOR when they're musing with someone they trust
             """
         case .zinsser:
             return """
-            - Strip every sentence to its core idea
-            - Short, common words over long or pretentious ones
-            - Active voice, strong concrete verbs
-            - One main idea per sentence, one main point per paragraph
-            - Direct, conversational, human tone - confident and declarative
+            - Strip sentences to their core ideas, but keep paragraphs cohesive
+            - Short, common words over pretentious ones; active voice, concrete verbs
+            - One main idea per paragraph; sentences can link and flow
+            - Direct, conversational, human; confident without bark or hype
             - No jargon, buzzwords, clichés, or filler
             """
         }

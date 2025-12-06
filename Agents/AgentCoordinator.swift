@@ -14,7 +14,6 @@ actor AgentCoordinator {
 
     private var llmClient: LLMClient
     private var modelConfig: LLMModelConfig
-    private var provider: LLMProvider
 
     // Pre-interview agent
     private var plannerAgent: PlannerAgent
@@ -62,7 +61,6 @@ actor AgentCoordinator {
     private let maxTranscriptEntriesForOrchestrator = 30  // Orchestrator needs more for decisions
 
     private init() {
-        self.provider = .openAI
         self.modelConfig = LLMModelResolver.config(for: .openAI)
         let adapter = OpenAIAdapter()
         self.llmClient = adapter
@@ -75,10 +73,9 @@ actor AgentCoordinator {
         self.followUpAgent = FollowUpAgent(client: adapter, modelConfig: modelConfig)
     }
 
-    func updateLLM(client: LLMClient, modelConfig: LLMModelConfig, provider: LLMProvider) {
+    func updateLLM(client: LLMClient, modelConfig: LLMModelConfig) {
         self.llmClient = client
         self.modelConfig = modelConfig
-        self.provider = provider
         self.plannerAgent = PlannerAgent(client: client, modelConfig: modelConfig)
         self.noteTakerAgent = NoteTakerAgent(client: client, modelConfig: modelConfig)
         self.researcherAgent = ResearcherAgent(client: client, modelConfig: modelConfig)

@@ -93,6 +93,14 @@ struct DraftView: View {
                     .accessibilityLabel("Share essay")
                     .accessibilityHint("Double tap to share the essay")
                 }
+
+                Button {
+                    appState.resetNavigation()
+                } label: {
+                    Label("Home", systemImage: "house")
+                }
+                .accessibilityLabel("Go home")
+                .accessibilityHint("Double tap to return to the home screen")
             }
         }
         .task {
@@ -200,6 +208,53 @@ struct DraftView: View {
         .padding()
     }
 
+    // MARK: - Streaming Draft View
+
+    @ViewBuilder
+    private func streamingDraftView(_ session: InterviewSession) -> some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    // Style badge with streaming indicator
+                    HStack {
+                        Label(appState.selectedDraftStyle.displayName, systemImage: "paintbrush")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(.secondary.opacity(0.1), in: Capsule())
+
+                        Spacer()
+
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Writing...")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Divider()
+
+                    // Markdown content with basic rendering
+                    MarkdownView(content: markdownContent)
+
+                    // Invisible anchor for auto-scrolling
+                    Color.clear
+                        .frame(height: 1)
+                        .id("streaming-bottom")
+                }
+                .padding()
+            }
+            .onChange(of: markdownContent) { _, _ in
+                withAnimation(.easeOut(duration: 0.1)) {
+                    proxy.scrollTo("streaming-bottom", anchor: .bottom)
+                }
+            }
+        }
+    }
+
     // MARK: - Complete Draft View
 
     @ViewBuilder
@@ -281,6 +336,8 @@ struct DraftView: View {
         }
 
         stage = .generating
+        markdownContent = ""
+        isStreaming = true
 
         do {
             // Convert transcript to TranscriptEntry format
@@ -306,8 +363,8 @@ struct DraftView: View {
                 log("Follow-up plan but previousSessionId is nil")
             }
 
-            // Generate draft
-            let markdown = try await AgentCoordinator.shared.writeDraft(
+            // Generate draft with streaming
+            let stream = await AgentCoordinator.shared.writeDraftStreaming(
                 transcript: transcript,
                 analysis: analysis,
                 plan: plan.toSnapshot(),
@@ -315,11 +372,20 @@ struct DraftView: View {
                 previousTranscript: previousTranscript
             )
 
+            // Accumulate streaming chunks
+            var fullMarkdown = ""
+            for try await chunk in stream {
+                fullMarkdown += chunk
+                await MainActor.run {
+                    markdownContent = fullMarkdown
+                }
+            }
+
             // Save to SwiftData
             await MainActor.run {
                 let draft = Draft(
                     style: appState.selectedDraftStyle.rawValue,
-                    markdownContent: markdown
+                    markdownContent: fullMarkdown
                 )
                 draft.session = session
                 session.drafts.append(draft)
@@ -329,11 +395,12 @@ struct DraftView: View {
                     log("Failed to save draft: \(error.localizedDescription)")
                 }
 
-                markdownContent = markdown
+                isStreaming = false
                 stage = .complete
             }
         } catch {
             await MainActor.run {
+                isStreaming = false
                 currentError = AppError.from(error, context: .draftGeneration)
                 stage = .error
             }

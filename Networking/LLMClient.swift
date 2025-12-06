@@ -1,5 +1,4 @@
 import Foundation
-import AnthropicSwift
 
 protocol LLMClient: Sendable {
     func chatStructured<T: Decodable & Sendable>(
@@ -103,80 +102,6 @@ final class OpenAIAdapter: LLMClient, @unchecked Sendable {
                     for try await chunk in stream {
                         continuation.yield(chunk)
                     }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-        }
-    }
-}
-
-final class AnthropicAdapter: LLMClient, @unchecked Sendable {
-    private let client: AnthropicClient
-
-    init(apiKey: String) {
-        self.client = AnthropicClient(apiKey: apiKey)
-    }
-
-    private func log(_ message: String) {
-        StructuredLogger.log(component: "Anthropic Adapter", message: message)
-    }
-
-    func chatStructured<T: Decodable & Sendable>(
-        messages: [Message],
-        model: String,
-        schemaName: String,
-        schema: [String: Any],
-        maxTokens: Int?
-    ) async throws -> T {
-        let params = MessageCreateParams(
-            model: model,
-            maxTokens: maxTokens,
-            messages: messages.map { MessageInput(role: $0.role, content: [.text($0.content)]) }
-        )
-        log("Structured chat request model=\(model) schema=\(schemaName) messages=\(messages.count)")
-        do {
-            return try await client.messages.createStructured(params, decodeAs: T.self)
-        } catch {
-            log("Anthropic structured error: \(error.localizedDescription)")
-            throw error
-        }
-    }
-
-    func chatText(
-        messages: [Message],
-        model: String,
-        maxTokens: Int?
-    ) async throws -> String {
-        let params = MessageCreateParams(
-            model: model,
-            maxTokens: maxTokens,
-            messages: messages.map { MessageInput(role: $0.role, content: [.text($0.content)]) }
-        )
-        log("Text chat request model=\(model) messages=\(messages.count)")
-        do {
-            let response = try await client.messages.create(params)
-            return response.textContent()
-        } catch {
-            log("Anthropic text error: \(error.localizedDescription)")
-            throw error
-        }
-    }
-
-    func chatTextStreaming(
-        messages: [Message],
-        model: String,
-        maxTokens: Int?
-    ) -> AsyncThrowingStream<String, Error> {
-        // Anthropic streaming fallback: yield full text in one chunk for now
-        log("Streaming text chat request model=\(model) messages=\(messages.count)")
-
-        return AsyncThrowingStream { continuation in
-            Task {
-                do {
-                    let text = try await chatText(messages: messages, model: model, maxTokens: maxTokens)
-                    continuation.yield(text)
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)

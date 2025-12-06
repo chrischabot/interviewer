@@ -13,15 +13,11 @@ let package = Package(
             targets: ["Interviewer"]
         )
     ],
-    dependencies: [
-        .package(path: "anthropic-swift-sdk")
-    ],
+    dependencies: [],
     targets: [
         .executableTarget(
             name: "Interviewer",
-            dependencies: [
-                .product(name: "AnthropicSwift", package: "anthropic-swift-sdk")
-            ],
+            dependencies: [],
             path: ".",
             exclude: [
                 "Package.swift",

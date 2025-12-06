@@ -4,10 +4,8 @@ struct SettingsView: View {
     @Environment(AppState.self) private var appState
 
     @State private var openAIKey = ""
-    @State private var anthropicKey = ""
     @State private var showOpenAIKey = false
-    @State private var showAnthropicKey = false
-    @State private var validatingProvider: LLMProvider?
+    @State private var validating = false
 
     private var audioDeviceManager: AudioDeviceManager { AudioDeviceManager.shared }
 
@@ -18,7 +16,6 @@ struct SettingsView: View {
                 audioDevicesSection
 
                 apiConfigurationSection
-                providerSection
                 statusSection
                 aboutSection
                 privacySection
@@ -104,28 +101,14 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 12) {
                 providerKeyField(
                     title: "OpenAI API Key",
-                    helper: "Stored securely in Keychain. Used for all agents when OpenAI is selected.",
+                    helper: "Stored securely in Keychain. Used for all agents.",
                     text: $openAIKey,
                     isSecure: !showOpenAIKey,
                     toggleSecure: { showOpenAIKey.toggle() },
-                    provider: .openAI,
                     isValid: appState.openAIValid,
                     errorText: appState.openAIError,
-                    validateAction: { Task { await saveKey(for: .openAI) } },
-                    deleteAction: { Task { await deleteKey(for: .openAI) } }
-                )
-
-                providerKeyField(
-                    title: "Anthropic API Key",
-                    helper: "Stored securely in Keychain. Used for all agents when Anthropic is selected.",
-                    text: $anthropicKey,
-                    isSecure: !showAnthropicKey,
-                    toggleSecure: { showAnthropicKey.toggle() },
-                    provider: .anthropic,
-                    isValid: appState.anthropicValid,
-                    errorText: appState.anthropicError,
-                    validateAction: { Task { await saveKey(for: .anthropic) } },
-                    deleteAction: { Task { await deleteKey(for: .anthropic) } }
+                    validateAction: { Task { await saveKey() } },
+                    deleteAction: { Task { await deleteKey() } }
                 )
             }
             .padding(.vertical, 8)
@@ -139,7 +122,6 @@ struct SettingsView: View {
         text: Binding<String>,
         isSecure: Bool,
         toggleSecure: @escaping () -> Void,
-        provider: LLMProvider,
         isValid: Bool,
         errorText: String?,
         validateAction: @escaping () -> Void,
@@ -177,9 +159,9 @@ struct SettingsView: View {
             HStack(spacing: 12) {
                 Button("Save & Validate") { validateAction() }
                     .buttonStyle(.borderedProminent)
-                    .disabled(text.wrappedValue.isEmpty || validatingProvider != nil)
+                    .disabled(text.wrappedValue.isEmpty || validating)
 
-                if validatingProvider == provider {
+                if validating {
                     ProgressView().scaleEffect(0.8)
                 }
 
@@ -200,56 +182,17 @@ struct SettingsView: View {
         .padding(.vertical, 4)
     }
 
-    // MARK: - Provider selection + models
-
-    @ViewBuilder
-    private var providerSection: some View {
-        GroupBox("Provider") {
-            VStack(alignment: .leading, spacing: 12) {
-                if appState.openAIValid && appState.anthropicValid {
-                    Picker("Provider", selection: Binding(
-                        get: { appState.selectedProvider ?? .openAI },
-                        set: { provider in Task { await appState.selectProvider(provider) } }
-                    )) {
-                        Text("OpenAI (gpt-5.1)").tag(LLMProvider.openAI)
-                        Text("Anthropic (4.5)").tag(LLMProvider.anthropic)
-                    }
-                    .pickerStyle(.menu)
-                } else if appState.openAIValid {
-                    Label("Using OpenAI (gpt-5.1)", systemImage: "checkmark.circle")
-                } else if appState.anthropicValid {
-                    Label("Using Anthropic (4.5)", systemImage: "checkmark.circle")
-                } else {
-                    Label("No provider ready", systemImage: "exclamationmark.circle")
-                        .foregroundStyle(.orange)
-                }
-
-                if let provider = appState.selectedProvider {
-                    let config = LLMModelResolver.config(for: provider)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Model mapping")
-                            .font(.subheadline)
-                            .bold()
-                        LabeledContent("Insight agents", value: "\(config.insightModel)")
-                        LabeledContent("Speed agents", value: "\(config.speedModel)")
-                    }
-                }
-            }
-            .padding(.vertical, 8)
-        }
-    }
-
     // MARK: - Status
 
     @ViewBuilder
     private var statusSection: some View {
         GroupBox("Status") {
             VStack(alignment: .leading, spacing: 8) {
-                if appState.hasAPIKey, let provider = appState.selectedProvider {
-                    Label("Ready with \(provider == .openAI ? "OpenAI" : "Anthropic")", systemImage: "checkmark.circle.fill")
+                if appState.hasAPIKey {
+                    Label("Ready with OpenAI", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(.green)
                 } else {
-                    Label("No valid provider configured", systemImage: "exclamationmark.circle.fill")
+                    Label("No valid API key configured", systemImage: "exclamationmark.circle.fill")
                         .foregroundStyle(.orange)
                 }
             }
@@ -269,9 +212,6 @@ struct SettingsView: View {
 
                 Link(destination: URL(string: "https://platform.openai.com/docs")!) {
                     Label("OpenAI Documentation", systemImage: "book")
-                }
-                Link(destination: URL(string: "https://docs.anthropic.com/claude")!) {
-                    Label("Anthropic Documentation", systemImage: "book")
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -315,22 +255,16 @@ struct SettingsView: View {
 
     private func loadKeys() {
         openAIKey = appState.openAIKeyCached ?? ""
-        anthropicKey = appState.anthropicKeyCached ?? ""
     }
 
-    private func saveKey(for provider: LLMProvider) async {
-        validatingProvider = provider
-        switch provider {
-        case .openAI:
-            await appState.saveAPIKey(openAIKey, provider: .openAI)
-        case .anthropic:
-            await appState.saveAPIKey(anthropicKey, provider: .anthropic)
-        }
-        validatingProvider = nil
+    private func saveKey() async {
+        validating = true
+        await appState.saveAPIKey(openAIKey)
+        validating = false
     }
 
-    private func deleteKey(for provider: LLMProvider) async {
-        await appState.deleteAPIKey(provider: provider)
+    private func deleteKey() async {
+        await appState.deleteAPIKey()
         loadKeys()
     }
 }
