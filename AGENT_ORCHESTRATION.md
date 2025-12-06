@@ -1,6 +1,6 @@
 # Agent Orchestration System
 
-The Interviewer app employs a multi-agent architecture where six specialized AI agents collaborate to conduct interviews, gather insights, and produce narrative essays. This document describes how these agents work, communicate, and coordinate throughout the interview lifecycle.
+The Interviewer app employs a multi-agent architecture where seven specialized AI agents collaborate to conduct interviews, gather insights, and produce narrative essays. This document describes how these agents work, communicate, and coordinate throughout the interview lifecycle.
 
 ---
 
@@ -16,6 +16,10 @@ The Interviewer app employs a multi-agent architecture where six specialized AI 
 8. [Agent Communication Patterns](#agent-communication-patterns)
 9. [Transcript Windowing](#transcript-windowing)
 10. [State Management](#state-management)
+11. [Follow-Up Sessions](#follow-up-sessions)
+12. [Interview Closing Detection](#interview-closing-detection)
+13. [Writer Voice Matching](#writer-voice-matching)
+14. [SwiftData Actor Patterns](#swiftdata-actor-patterns)
 
 ---
 
@@ -53,14 +57,15 @@ The agent system is built on several core principles:
 
 | Agent | Purpose | Inputs | Outputs |
 |-------|---------|--------|---------|
-| **Analysis** | Extract essay-ready insights | Full transcript, notes, plan | Main claims, themes, tensions, quotes, title |
-| **Writer** | Generate the narrative essay | Transcript, analysis, plan, style | Markdown essay |
+| **Analysis** | Extract essay-ready insights | Full transcript (merged if follow-up), notes, plan | Main claims, themes, tensions, quotes, title |
+| **Writer** | Generate the narrative essay | Transcript (merged if follow-up), analysis, plan, style | Markdown essay in speaker's voice |
+| **Follow-Up** | Identify threads for deeper exploration | Session transcript, notes, plan | Suggested topics, unexplored gaps, strengthening areas |
 
 ---
 
 ## The Three Phases
 
-The Orchestrator divides the interview into three phases based on elapsed time:
+The Orchestrator divides the interview into three phases based on elapsed time. The default interview duration is **14 minutes**, which includes approximately 4 minutes of "exploration time" for following interesting tangents and whimsical discovery.
 
 ### Opening Phase (First ~15% of time)
 
@@ -688,6 +693,264 @@ The `AgentLogger` provides human-readable logging of agent activity:
 
 ---
 
+## Follow-Up Sessions
+
+The system supports **follow-up sessions** that allow users to deepen an existing conversation with a focused 6-minute continuation.
+
+### How Follow-Ups Work
+
+1. **User selects "Continue" on a completed session**
+2. **Follow-Up Agent analyzes** the previous transcript and notes
+3. **Agent suggests 3 topics** for deeper exploration
+4. **User picks a topic** (or provides custom direction)
+5. **New 6-minute session begins** with context about what was already discussed
+6. **Transcripts are merged** for analysis and writing
+
+### Follow-Up Agent Output
+
+```swift
+struct FollowUpAnalysis: Codable {
+    let summary: String                    // Brief summary of what was covered
+    let suggestedTopics: [FollowUpTopic]   // 3 suggested directions
+    let unexploredGaps: [String]           // Topics touched but not explored
+    let strengthenAreas: [String]          // Areas that could use more depth
+}
+
+struct FollowUpTopic: Codable {
+    let title: String          // Short title (3-5 words)
+    let description: String    // Why this is worth exploring
+    let suggestedQuestions: [String]  // 2-3 starter questions
+}
+```
+
+### Plan Model Extensions
+
+```swift
+// Added to Plan model
+var isFollowUp: Bool = false
+var previousSessionId: UUID?    // Links to the original session
+var followUpContext: String = ""  // Summary of what to explore further
+```
+
+### Transcript Merging
+
+For follow-up sessions, both **Analysis** and **Writer** agents receive merged transcripts:
+
+```swift
+// In AnalysisView and DraftView
+if plan.isFollowUp, let previousSessionId = plan.previousSessionId {
+    let previousTranscript = await fetchPreviousTranscript(sessionId: previousSessionId)
+    transcript = previousTranscript + currentTranscript  // Original first, then follow-up
+}
+```
+
+The merged transcript ensures the essay reflects the complete conversation arc, not just the 6-minute addition.
+
+### Interviewer Instructions for Follow-Ups
+
+When starting a follow-up, the Realtime API receives special context:
+
+```markdown
+**IMPORTANT: This is a FOLLOW-UP conversation.**
+
+In the previous session, you discussed:
+[summary of previous session]
+
+This follow-up focuses on:
+[selected topic from FollowUpAnalysis]
+
+Do NOT re-ask questions already thoroughly covered. Instead:
+- Go deeper on partially explored threads
+- Explore new angles on familiar topics
+- Draw connections between ideas from both sessions
+```
+
+---
+
+## Interview Closing Detection
+
+The system automatically detects when the AI interviewer delivers a closing remark and immediately ends the interview.
+
+### Detection Mechanism
+
+The `InterviewSessionManager` monitors AI responses for closing phrases:
+
+```swift
+private let closingPhrases = [
+    "thank you so much for",
+    "this has been a wonderful",
+    "really appreciate you taking the time",
+    "what a fascinating conversation",
+    "thank you for sharing"
+]
+
+private func checkForClosingRemark(_ text: String) {
+    let lower = text.lowercased()
+    for phrase in closingPhrases {
+        if lower.contains(phrase) {
+            hasDetectedClosing = true
+            break
+        }
+    }
+}
+```
+
+### Immediate Termination
+
+When a closing is detected:
+
+1. **Audio capture stops immediately** (no more mic input sent)
+2. **WebSocket connection closes** (prevents phantom responses)
+3. **UI transitions** from red "End" button to blue "Next" button
+4. **User clicks "Next"** to proceed to Analysis
+
+This prevents the AI from waiting for user input after saying goodbye and responding to ambient noise or silence.
+
+### Why This Matters
+
+Without closing detection, the interview would:
+- Wait 3+ seconds of silence after the closing remark
+- Potentially respond to phantom audio or room noise
+- Create an awkward UX where the user has to manually end after the AI's goodbye
+
+---
+
+## Writer Voice Matching
+
+The Writer agent is designed to produce essays in the **speaker's own voice**, not a generic polished style.
+
+### Voice Extraction Approach
+
+The Writer prompt instructs:
+
+```markdown
+## Voice Analysis (Before Writing)
+
+Study the transcript for:
+- **Vocabulary patterns**: Technical terms vs. plain language, formal vs. casual
+- **Sentence rhythm**: Short punchy statements? Long flowing explanations?
+- **Characteristic phrases**: Verbal tics, favorite expressions, way of building arguments
+- **Emotional register**: Enthusiastic? Measured? Self-deprecating? Confident?
+
+Mirror these patterns. If they say "gnarly problem", don't write "complex challenge".
+```
+
+### Zinsser Writing Principles
+
+The Writer follows William Zinsser's principles from "On Writing Well":
+
+1. **Cut clutter** - Every word must earn its place
+2. **Be specific** - Concrete details over abstractions
+3. **Use active voice** - "We shipped it" not "It was shipped by us"
+4. **Write with humanity** - Sound like a person, not an institution
+5. **Unity of tense and mood** - Consistent throughout
+6. **The lead matters** - First paragraph must hook the reader
+
+### First-Person Ghostwriting
+
+The essay is written as if **the speaker wrote it themselves**:
+
+```markdown
+❌ WRONG (third-person journalism):
+"Chabot explained that the hardest part was convincing the team..."
+
+✅ RIGHT (first-person ghostwriting):
+"The hardest part wasn't the technology—it was convincing the team..."
+```
+
+### Style Options
+
+The Writer supports three styles:
+
+| Style | Characteristics |
+|-------|-----------------|
+| **Standard** | Clean, balanced narrative with clear structure |
+| **Punchy** | Short paragraphs, bold claims, Twitter-thread energy |
+| **Reflective** | Longer form, philosophical, more introspective |
+
+All styles maintain the speaker's voice—the difference is in structure and pacing.
+
+---
+
+## SwiftData Actor Patterns
+
+When passing SwiftData `@Model` objects to Swift actors, special patterns are required to avoid data race errors.
+
+### The Problem
+
+```swift
+// ❌ This causes: "Sending 'session' risks causing data races"
+actor FollowUpAgent {
+    func analyze(session: InterviewSession) async throws -> FollowUpAnalysis
+}
+```
+
+SwiftData models are not `Sendable` and cannot safely cross actor boundaries.
+
+### The Solution: Sendable Snapshots
+
+Create lightweight, `Sendable` structs that extract only the needed data:
+
+```swift
+struct SessionSnapshot: Sendable {
+    let id: UUID
+    let utterances: [UtteranceSnapshot]
+    let notes: NotesSnapshot?
+}
+
+struct UtteranceSnapshot: Sendable {
+    let speaker: String
+    let text: String
+    let timestamp: Date
+}
+
+struct NotesSnapshot: Sendable {
+    let keyIdeas: [KeyIdea]
+    let stories: [Story]
+    let claims: [Claim]
+    let gaps: [Gap]
+    let contradictions: [Contradiction]
+    let possibleTitles: [String]
+}
+```
+
+### Usage Pattern
+
+```swift
+// Extract on main actor (where SwiftData lives)
+@MainActor
+func prepareForFollowUp(session: InterviewSession) async throws -> FollowUpAnalysis {
+    // Create snapshot while on main actor
+    let snapshot = SessionSnapshot(
+        id: session.id,
+        utterances: session.utterances.map { UtteranceSnapshot(from: $0) },
+        notes: session.notesState.map { NotesSnapshot(from: $0) }
+    )
+
+    // Now safe to pass to actor
+    return try await followUpAgent.analyze(session: snapshot)
+}
+```
+
+### SwiftData Predicate Capture Pattern
+
+When using `#Predicate` with external values, capture them first:
+
+```swift
+// ❌ This fails: Cannot reference 'plan' inside #Predicate
+let descriptor = FetchDescriptor<InterviewSession>(
+    predicate: #Predicate { $0.plan?.id == plan.id }
+)
+
+// ✅ Capture value first, then use in predicate
+let planId = plan.id
+let descriptor = FetchDescriptor<InterviewSession>(
+    predicate: #Predicate { $0.plan?.id == planId }
+)
+```
+
+---
+
 ## Summary
 
 The agent orchestration system is designed to:
@@ -696,7 +959,8 @@ The agent orchestration system is designed to:
 2. **Listen actively** (NoteTaker extracts insights in real-time)
 3. **Verify skeptically** (Researcher fact-checks and finds counterpoints)
 4. **Steer intelligently** (Orchestrator balances plan coverage with organic flow)
-5. **Analyze deeply** (Analysis extracts essay-ready structure)
-6. **Write compellingly** (Writer produces narrative that captures the expert's voice)
+5. **Analyze deeply** (Analysis extracts essay-ready structure from merged transcripts)
+6. **Write compellingly** (Writer produces narrative in the speaker's authentic voice)
+7. **Enable continuation** (Follow-Up identifies threads for deeper exploration)
 
-The system balances structure with spontaneity, ensuring that must-hit topics are covered while leaving room for the serendipitous moments that make great interviews.
+The system balances structure with spontaneity, ensuring that must-hit topics are covered while leaving room for the serendipitous moments that make great interviews. With follow-up sessions, users can return to deepen their exploration, and the resulting essay weaves all conversations into a single, richer narrative.
