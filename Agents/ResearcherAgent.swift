@@ -33,6 +33,9 @@ struct ResearcherResponse: Codable {
         let summary: String
         let howToUseInQuestion: String
         let priority: Int
+        // Claim verification fields (optional, used when kind = "claim_verification")
+        let verificationStatus: String?
+        let verificationNote: String?
 
         enum CodingKeys: String, CodingKey {
             case topic
@@ -40,6 +43,8 @@ struct ResearcherResponse: Codable {
             case summary
             case howToUseInQuestion = "how_to_use_in_question"
             case priority
+            case verificationStatus = "verification_status"
+            case verificationNote = "verification_note"
         }
 
         func toResearchItem() -> ResearchItem {
@@ -48,7 +53,9 @@ struct ResearcherResponse: Codable {
                 kind: kind,
                 summary: summary,
                 howToUseInQuestion: howToUseInQuestion,
-                priority: priority
+                priority: priority,
+                verificationStatus: verificationStatus,
+                verificationNote: verificationNote
             )
         }
     }
@@ -56,7 +63,8 @@ struct ResearcherResponse: Codable {
 
 /// ResearcherAgent identifies and researches unfamiliar concepts from the interview
 actor ResearcherAgent {
-    private let client: OpenAIClient
+    private let llm: LLMClient
+    private var modelConfig: LLMModelConfig
     private var lastActivityTime: Date?
 
     // Track topics we've ATTEMPTED to research (not just successful)
@@ -65,6 +73,8 @@ actor ResearcherAgent {
     private var successfulTopics: Set<String> = []
     // Track when topics were attempted (for potential refresh)
     private var attemptedAt: [String: Date] = [:]
+    // Track when topics were successfully researched (for refresh after new context emerges)
+    private var successfulAt: [String: Date] = [:]
 
     // Time after which a topic can be researched again (for fresh context)
     private let topicRefreshInterval: TimeInterval = 300  // 5 minutes
@@ -76,8 +86,9 @@ actor ResearcherAgent {
     // Content hash to detect if transcript has actually changed
     private var lastTranscriptHash: Int = 0
 
-    init(client: OpenAIClient = .shared) {
-        self.client = client
+    init(client: LLMClient, modelConfig: LLMModelConfig) {
+        self.llm = client
+        self.modelConfig = modelConfig
     }
 
     /// Reset state for a new interview session
@@ -85,6 +96,7 @@ actor ResearcherAgent {
         attemptedTopics = []
         successfulTopics = []
         attemptedAt = [:]
+        successfulAt = [:]
         lastActivityTime = nil
         consecutiveFailures = 0
         lastTranscriptHash = 0
@@ -125,6 +137,13 @@ actor ResearcherAgent {
         attemptedTopics = attemptedTopics.filter { topicKey in
             guard let attemptTime = attemptedAt[topicKey] else { return false }
             return now.timeIntervalSince(attemptTime) < topicRefreshInterval
+        }
+
+        // Refresh successful topics - allow re-research after interval if new context emerges
+        // This catches cases where new contradictory info comes up later in the interview
+        successfulTopics = successfulTopics.filter { topicKey in
+            guard let successTime = successfulAt[topicKey] else { return false }
+            return now.timeIntervalSince(successTime) < topicRefreshInterval
         }
 
         // Also keep track of what's already been successfully researched
@@ -168,6 +187,7 @@ actor ResearcherAgent {
             do {
                 if let item = try await researchTopic(searchTopic) {
                     successfulTopics.insert(topicKey)
+                    successfulAt[topicKey] = Date()  // Track when for refresh logic
                     newResearchItems.append(item)
                     hadSuccess = true
                     AgentLogger.researcherFound(topic: item.topic, summary: item.summary)
@@ -257,21 +277,16 @@ actor ResearcherAgent {
         - Explain WHY it would help the interviewer with a follow-up question
         """
 
-        let response = try await client.chatCompletion(
+        let analysis: ResearcherAnalysis = try await llm.chatStructured(
             messages: [
                 Message.system(Self.identifySystemPrompt),
                 Message.user(userPrompt)
             ],
-            model: "gpt-4o",
-            responseFormat: .jsonSchema(name: "research_topics_schema", schema: Self.identifyJsonSchema)
+            model: modelConfig.insightModel,
+            schemaName: "research_topics_schema",
+            schema: Self.identifyJsonSchema,
+            maxTokens: nil
         )
-
-        guard let content = response.choices.first?.message.content,
-              let data = content.data(using: .utf8) else {
-            return []
-        }
-
-        let analysis = try JSONDecoder().decode(ResearcherAnalysis.self, from: data)
 
         // Filter out already-attempted topics (case-insensitive)
         return analysis.topicsToResearch.filter { topic in
@@ -297,39 +312,29 @@ actor ResearcherAgent {
         and suggest what the interviewer might ask to learn more from the expert.
         """
 
-        let response = try await client.chatCompletion(
+        let result: ResearcherResponse.ResearchItemResponse = try await llm.chatStructured(
             messages: [
                 Message.system(Self.researchSystemPrompt),
                 Message.user(userPrompt)
             ],
-            model: "gpt-4o",
-            responseFormat: .jsonSchema(name: "research_result_schema", schema: Self.researchResultJsonSchema)
+            model: modelConfig.insightModel,
+            schemaName: "research_result_schema",
+            schema: Self.researchResultJsonSchema,
+            maxTokens: nil
         )
-
-        guard let content = response.choices.first?.message.content,
-              let data = content.data(using: .utf8) else {
-            throw OpenAIError.invalidResponse
-        }
-
-        do {
-            let result = try JSONDecoder().decode(ResearcherResponse.ResearchItemResponse.self, from: data)
-            return result.toResearchItem()
-        } catch {
-            // Log decoding error for debugging
-            AgentLogger.researcherError(topic: topic.topic, error: "JSON decode failed: \(error.localizedDescription)")
-            throw error
-        }
+        return result.toResearchItem()
     }
 
     // MARK: - System Prompts
 
     static let identifySystemPrompt = """
-    You are a research assistant helping during a live interview. Your job is to identify SPECIFIC, CONCRETE topics that would benefit from additional context.
+    You are a research assistant helping during a live interview. Your job is to identify SPECIFIC, CONCRETE topics that would benefit from additional context OR claims that should be fact-checked.
 
     **IMPORTANT: Be VERY selective.** Only suggest topics when:
     1. The expert mentioned a SPECIFIC name, company, product, framework, or technical term
     2. The topic is genuinely unfamiliar or has nuances worth exploring
     3. Providing context would help the interviewer ask a better follow-up question
+    4. The expert made a VERIFIABLE CLAIM with specific numbers, dates, or facts
 
     **DO NOT suggest:**
     - The main interview topic itself (e.g., if interviewing about "AI-native apps", don't suggest "AI-native applications")
@@ -342,7 +347,11 @@ actor ResearcherAgent {
     - Specific people or researchers referenced
     - Specific products, frameworks, or tools
     - Technical terms or jargon that might need clarification
-    - Specific claims with numbers that could be verified
+    - **VERIFIABLE CLAIMS** - Use kind "claim_verification" for:
+      * Statistics or percentages the expert cited ("90% of startups fail")
+      * Historical facts or dates ("GPT-4 was released in...")
+      * Market data or metrics ("The market is worth $X billion")
+      * Attributions ("Einstein said..." or "According to study X...")
 
     **Output:** Return 0-2 highly specific topics. If nothing concrete was mentioned, return an empty array. Quality over quantity.
     """
@@ -354,12 +363,23 @@ actor ResearcherAgent {
     - Provide factual, useful context from your knowledge
     - Help the interviewer ask informed follow-up questions
     - Be honest about uncertainty - if you're not sure about something, say so
+    - **VERIFY CLAIMS** when the research type is "claim_verification"
 
     **Guidelines:**
     - Include specific facts, dates, numbers when you know them
     - Suggest how this context could lead to a better question
     - Keep summaries concise (2-3 sentences)
     - If the topic is outside your knowledge, suggest what the interviewer might ask the expert
+
+    **For claim_verification:**
+    - Check if the claim is accurate based on your knowledge
+    - Set verification_status to one of:
+      * "verified" - The claim is accurate
+      * "contradicted" - The claim appears to be incorrect (provide the correct info)
+      * "partially_true" - The claim has some truth but is oversimplified or missing context
+      * "unverifiable" - You cannot verify this from your knowledge
+    - ALWAYS provide a verification_note explaining your finding
+    - If contradicted, the how_to_use_in_question should help the interviewer gently probe the discrepancy
     """
 
     // MARK: - JSON Schemas
@@ -372,11 +392,11 @@ actor ResearcherAgent {
                 "items": [
                     "type": "object",
                     "properties": [
-                        "topic": ["type": "string", "description": "The concept or term to research"],
+                        "topic": ["type": "string", "description": "The concept, term, or claim to research/verify"],
                         "kind": [
                             "type": "string",
-                            "enum": ["definition", "counterpoint", "example", "metric", "person", "company", "context", "trend"],
-                            "description": "What type of research is needed"
+                            "enum": ["definition", "counterpoint", "example", "metric", "person", "company", "context", "trend", "claim_verification"],
+                            "description": "What type of research is needed. Use 'claim_verification' for specific facts/stats to verify."
                         ],
                         "search_query": ["type": "string", "description": "A good search query to find this information"],
                         "why_useful": ["type": "string", "description": "How this research would help the interview"]
@@ -396,7 +416,7 @@ actor ResearcherAgent {
             "topic": ["type": "string", "description": "The topic that was researched"],
             "kind": [
                 "type": "string",
-                "enum": ["definition", "counterpoint", "example", "metric", "person", "company", "context", "trend"],
+                "enum": ["definition", "counterpoint", "example", "metric", "person", "company", "context", "trend", "claim_verification"],
                 "description": "The type of research"
             ],
             "summary": ["type": "string", "description": "Concise factual summary (2-3 sentences)"],
@@ -404,9 +424,18 @@ actor ResearcherAgent {
             "priority": [
                 "type": "integer",
                 "description": "How important this is (1 = very, 2 = moderate, 3 = nice-to-have)"
+            ],
+            "verification_status": [
+                "type": "string",
+                "enum": ["verified", "contradicted", "partially_true", "unverifiable"],
+                "description": "For claim_verification: whether the claim is accurate. Required when kind is claim_verification."
+            ],
+            "verification_note": [
+                "type": "string",
+                "description": "For claim_verification: explanation of the verification result. Required when kind is claim_verification."
             ]
         ],
-        "required": ["topic", "kind", "summary", "how_to_use_in_question", "priority"],
+        "required": ["topic", "kind", "summary", "how_to_use_in_question", "priority", "verification_status", "verification_note"],
         "additionalProperties": false
     ]
 }
