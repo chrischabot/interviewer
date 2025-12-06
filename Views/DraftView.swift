@@ -51,6 +51,7 @@ struct DraftView: View {
     @State private var currentError: AppError?
     @State private var showCopiedFeedback = false
     @State private var isStreaming = false
+    @State private var generationTask: Task<Void, Never>?
 
     private var session: InterviewSession? {
         sessions.first { $0.id == sessionId }
@@ -94,6 +95,17 @@ struct DraftView: View {
                     .accessibilityHint("Double tap to share the essay")
                 }
 
+                // Regenerate button - visible during generation or when complete
+                if stage == .generating || stage == .complete {
+                    Button {
+                        regenerateDraft()
+                    } label: {
+                        Label("Regenerate", systemImage: "arrow.clockwise")
+                    }
+                    .accessibilityLabel("Regenerate essay")
+                    .accessibilityHint("Double tap to generate a new version of the essay")
+                }
+
                 Button {
                     appState.resetNavigation()
                 } label: {
@@ -104,12 +116,18 @@ struct DraftView: View {
             }
         }
         .task {
-            await loadOrGenerateDraft()
+            generationTask = Task {
+                await loadOrGenerateDraft()
+            }
+        }
+        .onDisappear {
+            // Cancel any ongoing generation when leaving the view
+            generationTask?.cancel()
         }
         .errorAlert($currentError) { action in
             switch action {
             case .retry:
-                Task { await loadOrGenerateDraft() }
+                regenerateDraft()
             case .openSettings:
                 appState.showSettings = true
             case .goBack:
@@ -117,6 +135,30 @@ struct DraftView: View {
             default:
                 break
             }
+        }
+    }
+
+    private func regenerateDraft() {
+        // Cancel any ongoing generation
+        generationTask?.cancel()
+        generationTask = nil
+
+        // Reset state
+        markdownContent = ""
+        isStreaming = false
+        currentError = nil
+
+        // Delete existing draft for this style so we regenerate fresh
+        if let session {
+            if let existingDraft = session.drafts.first(where: { $0.style == appState.selectedDraftStyle.rawValue }) {
+                modelContext.delete(existingDraft)
+                try? modelContext.save()
+            }
+        }
+
+        // Start new generation
+        generationTask = Task {
+            await loadOrGenerateDraft()
         }
     }
 
@@ -375,10 +417,30 @@ struct DraftView: View {
             // Accumulate streaming chunks
             var fullMarkdown = ""
             for try await chunk in stream {
+                // Check for cancellation
+                if Task.isCancelled {
+                    log("Draft generation cancelled")
+                    await MainActor.run {
+                        isStreaming = false
+                        stage = .idle
+                    }
+                    return
+                }
+
                 fullMarkdown += chunk
                 await MainActor.run {
                     markdownContent = fullMarkdown
                 }
+            }
+
+            // Check for cancellation before saving
+            if Task.isCancelled {
+                log("Draft generation cancelled before save")
+                await MainActor.run {
+                    isStreaming = false
+                    stage = .idle
+                }
+                return
             }
 
             // Save to SwiftData
@@ -397,6 +459,13 @@ struct DraftView: View {
 
                 isStreaming = false
                 stage = .complete
+            }
+        } catch is CancellationError {
+            // Task was cancelled, don't show error
+            log("Draft generation cancelled")
+            await MainActor.run {
+                isStreaming = false
+                stage = .idle
             }
         } catch {
             await MainActor.run {

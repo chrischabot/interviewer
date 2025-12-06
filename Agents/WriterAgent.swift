@@ -42,11 +42,112 @@ actor WriterAgent {
 
         AgentLogger.writerStarted(style: style.displayName)
 
+        let userPrompt = buildUserPrompt(
+            transcript: transcript,
+            previousTranscript: previousTranscript,
+            analysis: analysis,
+            plan: plan,
+            style: style
+        )
+
+        let writerResponse: WriterResponse = try await llm.chatStructured(
+            messages: [
+                Message.system(systemPrompt(for: style)),
+                Message.user(userPrompt)
+            ],
+            model: modelConfig.insightModel,
+            schemaName: "writer_schema",
+            schema: Self.jsonSchema,
+            maxTokens: nil
+        )
+
+        AgentLogger.writerComplete(wordCount: writerResponse.wordCount, readingTime: writerResponse.estimatedReadingMinutes)
+
+        return writerResponse.markdown
+    }
+
+    /// Stream a blog post draft from analysis, yielding markdown chunks as they arrive
+    /// - Parameters:
+    ///   - transcript: Current session transcript
+    ///   - analysis: Analysis summary
+    ///   - plan: The interview plan
+    ///   - style: Writing style
+    ///   - previousTranscript: Optional transcript from a previous session (for follow-ups)
+    func writeDraftStreaming(
+        transcript: [TranscriptEntry],
+        analysis: AnalysisSummary,
+        plan: PlanSnapshot,
+        style: DraftStyle = .standard,
+        previousTranscript: [TranscriptEntry]? = nil
+    ) -> AsyncThrowingStream<String, Error> {
+        lastActivityTime = Date()
+
+        AgentLogger.writerStarted(style: style.displayName)
+
+        let userPrompt = buildUserPrompt(
+            transcript: transcript,
+            previousTranscript: previousTranscript,
+            analysis: analysis,
+            plan: plan,
+            style: style
+        )
+
+        return llm.chatTextStreaming(
+            messages: [
+                Message.system(systemPrompt(for: style)),
+                Message.user(userPrompt)
+            ],
+            model: modelConfig.insightModel,
+            maxTokens: nil
+        )
+    }
+
+    /// Activity score for UI meters (0-1 based on recency)
+    func getActivityScore() -> Double {
+        guard let lastActivity = lastActivityTime else { return 0.0 }
+        let elapsed = Date().timeIntervalSince(lastActivity)
+        return max(0, 1.0 - (elapsed / 30.0))
+    }
+
+    // MARK: - Helpers
+
+    private func buildAnalysisSummary(_ analysis: AnalysisSummary) -> String {
+        var parts: [String] = []
+
+        parts.append("**Research Goal Assessment:**\n\(analysis.researchGoal)")
+
+        parts.append("**Main Claims:**\n" + analysis.mainClaims.enumerated().map { i, claim in
+            "\(i + 1). \(claim.text)"
+        }.joined(separator: "\n"))
+
+        parts.append("**Themes:**\n" + analysis.themes.map { "- \($0)" }.joined(separator: "\n"))
+
+        if !analysis.tensions.isEmpty {
+            parts.append("**Tensions/Nuances:**\n" + analysis.tensions.map { "- \($0)" }.joined(separator: "\n"))
+        }
+
+        parts.append("**Key Quotes:**\n" + analysis.quotes.map { quote in
+            "> \"\(quote.text)\" [\(quote.role)]"
+        }.joined(separator: "\n"))
+
+        parts.append("**Suggested Title:** \(analysis.suggestedTitle)")
+        if !analysis.suggestedSubtitle.isEmpty {
+            parts.append("**Subtitle:** \(analysis.suggestedSubtitle)")
+        }
+
+        return parts.joined(separator: "\n\n")
+    }
+
+    private func buildUserPrompt(
+        transcript: [TranscriptEntry],
+        previousTranscript: [TranscriptEntry]?,
+        analysis: AnalysisSummary,
+        plan: PlanSnapshot,
+        style: DraftStyle
+    ) -> String {
         // Build full transcript for reference
-        // Note: The "user" is the author - this is THEIR blog post in THEIR voice
         var transcriptText = ""
 
-        // Include previous session transcript if this is a follow-up
         if let previous = previousTranscript, !previous.isEmpty {
             let previousText = previous.map { entry in
                 let speaker = entry.speaker == "assistant" ? "Interviewer" : "Author"
@@ -73,7 +174,7 @@ actor WriterAgent {
         // Build analysis summary
         let analysisSummary = buildAnalysisSummary(analysis)
 
-        let userPrompt = """
+        return """
         ## Interview Context
 
         **Topic:** \(plan.topic)
@@ -130,166 +231,6 @@ actor WriterAgent {
 
         Target length: 1200-2000 words (adjust based on content richness)
         """
-
-        let writerResponse: WriterResponse = try await llm.chatStructured(
-            messages: [
-                Message.system(systemPrompt(for: style)),
-                Message.user(userPrompt)
-            ],
-            model: modelConfig.insightModel,
-            schemaName: "writer_schema",
-            schema: Self.jsonSchema,
-            maxTokens: nil
-        )
-
-        AgentLogger.writerComplete(wordCount: writerResponse.wordCount, readingTime: writerResponse.estimatedReadingMinutes)
-
-        return writerResponse.markdown
-    }
-
-    /// Stream a blog post draft from analysis, yielding markdown chunks as they arrive
-    /// - Parameters:
-    ///   - transcript: Current session transcript
-    ///   - analysis: Analysis summary
-    ///   - plan: The interview plan
-    ///   - style: Writing style
-    ///   - previousTranscript: Optional transcript from a previous session (for follow-ups)
-    func writeDraftStreaming(
-        transcript: [TranscriptEntry],
-        analysis: AnalysisSummary,
-        plan: PlanSnapshot,
-        style: DraftStyle = .standard,
-        previousTranscript: [TranscriptEntry]? = nil
-    ) -> AsyncThrowingStream<String, Error> {
-        lastActivityTime = Date()
-
-        AgentLogger.writerStarted(style: style.displayName)
-
-        // Build full transcript for reference
-        var transcriptText = ""
-
-        if let previous = previousTranscript, !previous.isEmpty {
-            let previousText = previous.map { entry in
-                let speaker = entry.speaker == "assistant" ? "Interviewer" : "Author"
-                return "[\(speaker)]: \(entry.text)"
-            }.joined(separator: "\n\n")
-
-            transcriptText = """
-            ### Original Conversation
-            \(previousText)
-
-            ---
-
-            ### Follow-Up Conversation
-            """
-        }
-
-        let currentText = transcript.map { entry in
-            let speaker = entry.speaker == "assistant" ? "Interviewer" : "Author"
-            return "[\(speaker)]: \(entry.text)"
-        }.joined(separator: "\n\n")
-
-        transcriptText += currentText
-
-        let analysisSummary = buildAnalysisSummary(analysis)
-
-        let userPrompt = """
-        ## Interview Context
-
-        **Topic:** \(plan.topic)
-        **Research Goal:** \(plan.researchGoal)
-        **Angle:** \(plan.angle)
-
-        ## Analysis Summary
-        \(analysisSummary)
-
-        ## Full Transcript (for reference - the Author's actual words and phrasings)
-        \(transcriptText)
-
-        ---
-
-        **CRITICAL: This is the AUTHOR'S personal blog.**
-
-        The person labeled "Author" in the transcript is writing this essay to share THEIR OWN experiences and insights with the world. This is NOT a journalist writing about "an expert" - this IS the expert, speaking directly to their readers in first person.
-
-        Write as if you ARE the author, sharing YOUR thoughts, YOUR experiences, YOUR hard-won insights.
-
-        **Style:** \(style.rawValue)
-        \(styleGuidance(for: style))
-
-        **Hard constraints (apply in every style):**
-        - No em dashes or double hyphens; use commas or periods instead.
-        - No overly formal or neutral tone; keep it warm and human.
-        - Vary sentence length and rhythm; avoid repetitive cadence.
-        - Avoid signposting and empty summaries (e.g., "In conclusion," "It's important to note").
-        - Avoid "AI-sounding" vocabulary like "delve," "crucial/vital," "tapestry," "ever-evolving/dynamic," "it's important to note/remember/consider," "a stark reminder."
-
-        **Requirements:**
-
-        1. **Use first person throughout** - "I learned...", "In my experience...", "Here's what I discovered..."
-        2. **Use the suggested title** "\(analysis.suggestedTitle)" (or improve it)
-        3. **Open with a hook** - A surprising insight, a vivid scene, or a provocative question
-        4. **Preserve the author's voice** - Use their vocabulary, their turns of phrase, their way of building arguments
-        5. **Structure around main claims** - Each major point should have supporting stories/evidence from the transcript
-        6. **Acknowledge tensions** - Where nuance was expressed, reflect that complexity
-        7. **End with resonance** - A call to action or reflection that lingers
-
-        Output the essay as clean markdown with:
-        - # for the main title
-        - ## for section headers
-        - > for pull quotes (the author's own memorable lines, formatted for emphasis)
-        - *italics* for emphasis
-        - --- for section breaks if needed
-
-        Target length: 1200-2000 words (adjust based on content richness)
-
-        Output ONLY the markdown essay. Do not include any JSON wrapper or metadata.
-        """
-
-        return llm.chatTextStreaming(
-            messages: [
-                Message.system(systemPrompt(for: style)),
-                Message.user(userPrompt)
-            ],
-            model: modelConfig.insightModel,
-            maxTokens: nil
-        )
-    }
-
-    /// Activity score for UI meters (0-1 based on recency)
-    func getActivityScore() -> Double {
-        guard let lastActivity = lastActivityTime else { return 0.0 }
-        let elapsed = Date().timeIntervalSince(lastActivity)
-        return max(0, 1.0 - (elapsed / 30.0))
-    }
-
-    // MARK: - Helpers
-
-    private func buildAnalysisSummary(_ analysis: AnalysisSummary) -> String {
-        var parts: [String] = []
-
-        parts.append("**Research Goal Assessment:**\n\(analysis.researchGoal)")
-
-        parts.append("**Main Claims:**\n" + analysis.mainClaims.enumerated().map { i, claim in
-            "\(i + 1). \(claim.text)"
-        }.joined(separator: "\n"))
-
-        parts.append("**Themes:**\n" + analysis.themes.map { "- \($0)" }.joined(separator: "\n"))
-
-        if !analysis.tensions.isEmpty {
-            parts.append("**Tensions/Nuances:**\n" + analysis.tensions.map { "- \($0)" }.joined(separator: "\n"))
-        }
-
-        parts.append("**Key Quotes:**\n" + analysis.quotes.map { quote in
-            "> \"\(quote.text)\" [\(quote.role)]"
-        }.joined(separator: "\n"))
-
-        parts.append("**Suggested Title:** \(analysis.suggestedTitle)")
-        if !analysis.suggestedSubtitle.isEmpty {
-            parts.append("**Subtitle:** \(analysis.suggestedSubtitle)")
-        }
-
-        return parts.joined(separator: "\n\n")
     }
 
     private func styleGuidance(for style: DraftStyle) -> String {
@@ -375,12 +316,10 @@ actor WriterAgent {
             return basePrompt + """
 
             **Punchy Style Notes:**
-            - Short sentences. Sharp observations.
-            - Lead with the most surprising insight
-            - A bit provocative - make the reader sit up
-            - Confident, almost swaggering prose
-            - Write like a brilliant contrarian at a dinner party
-            - Energy and momentum on every line
+            - Crisp but still warm; no aggression, no hype
+            - Paragraphs still 3–5 sentences; connective phrasing over punchlines
+            - Let sharp observations land inside flowing paragraphs
+            - Sound like the AUTHOR when they're lively with a friend, not pitching
             """
         case .reflective:
             return basePrompt + """
@@ -398,42 +337,40 @@ actor WriterAgent {
             You are a ghostwriter following William Zinsser's principles from "On Writing Well." The essay will be published as the author's blog post, in their voice, under their name. Write in first person.
 
             **CLARITY & SIMPLICITY**
-            1. Strip every sentence to its core idea. Remove unnecessary words, qualifiers, and repetition.
-            2. Prefer short, common words over long or pretentious ones when the meaning is the same.
-            3. Use active voice by default. Only use passive if the actor is unknown or irrelevant.
-            4. Express one main idea per sentence and one main point per paragraph.
-            5. Explain technical terms so an intelligent non-specialist can follow. Define them briefly when first used.
+            1. Prefer short, common words over long or pretentious ones when the meaning is the same.
+            2. Use active voice by default. Only use passive if the actor is unknown or irrelevant.
+            3. Express one main idea per sentence and one main point per paragraph.
+            4. Explain technical terms so an intelligent non-specialist can follow. Define them briefly when first used.
 
             **LANGUAGE & TONE**
-            6. Use strong, concrete verbs; avoid abstract noun phrases (e.g., "make a decision" → "decide").
-            7. Avoid jargon, buzzwords, and clichés. Use plain, fresh language instead.
-            8. Write in a direct, conversational, human tone. Do not be breezy, flippant, or patronizing.
-            9. Be confident and declarative. Avoid weak hedging like "sort of," "kind of," "basically," "in a way," unless clearly needed.
-            10. Use inclusive, unbiased language.
+            5. Use strong, concrete verbs; avoid abstract noun phrases (e.g., "make a decision" → "decide").
+            6. Avoid jargon, buzzwords, and clichés. Use plain, fresh language instead.
+            7. Write in a direct, conversational, human tone. Do not be breezy, flippant, or patronizing.
+            8. Be confident and declarative. Avoid weak hedging like "sort of," "kind of," "basically," "in a way," unless clearly needed.
+            9. Use inclusive, unbiased language.
 
             **STRUCTURE & FLOW**
-            11. Start with a clear hook that gives the reader a concrete reason to keep reading (a problem, question, or surprising fact).
-            12. State early what the piece is about and what question or problem it addresses.
-            13. Maintain a narrow focus. Do not wander into tangents or side topics that don't support the main point.
-            14. Organize paragraphs so each one clearly advances the main idea. The last sentence of a paragraph should naturally lead to the next.
-            15. Use simple transitions ("however," "for example," "by contrast," "as a result") to signal changes in direction or emphasis.
-            16. Keep sentences and paragraphs visually short for screen reading. Break up long blocks of text.
+            10. Start with a clear hook that gives the reader a concrete reason to keep reading (a problem, question, or surprising fact).
+            11. State early what the piece is about and what question or problem it addresses.
+            12. Maintain a narrow focus. Do not wander into tangents or side topics that don't support the main point.
+            13. Organize paragraphs so each one clearly advances the main idea. The last sentence of a paragraph should naturally lead to the next.
+            14. Use simple transitions ("however," "for example," "by contrast," "as a result") to signal changes in direction or emphasis.
+            15. Keep sentences and paragraphs visually short for screen reading. Break up long blocks of text.
 
             **VOICE & POINT OF VIEW**
-            17. Write as a real person speaking to another real person. Use first person ("I") naturally.
-            18. Take a clear point of view. Make judgments and draw conclusions instead of staying vague or neutral.
-            19. Keep voice, tense, and point of view consistent throughout the piece.
+            16. Write as a real person speaking to another real person. Use first person ("I") naturally.
+            17. Take a clear point of view. Make judgments and draw conclusions instead of staying vague or neutral.
+            18. Keep voice, tense, and point of view consistent throughout the piece.
 
             **EDITING RULES**
-            20. Prefer shorter sentences when a long one can be cleanly split without losing meaning.
-            21. Delete any sentence or phrase that is redundant, overly ornate, or off-topic.
-            22. Avoid long stacks of nouns (e.g., "implementation methodology framework"). Use "subject + strong verb + object" instead.
-            23. When you give an example, explain it clearly and then tie it back to the main point in one or two sentences.
+            19. Prefer shorter sentences when a long one can be cleanly split without losing meaning.
+            20. Delete any sentence or phrase that is redundant, overly ornate, or off-topic.
+            21. When you give an example, explain it clearly and then tie it back to the main point in one or two sentences.
 
             **HARD DON'TS**
-            24. Do not use corporate buzzwords such as "leverage synergies," "paradigm shift," "cutting-edge solution."
-            25. Do not use filler clichés like "in today's world," "at the end of the day," "needless to say."
-            26. Do not pad the piece to reach a target length. Stop when the explanation is clear, complete, and satisfying.
+            22. Do not use corporate buzzwords such as "leverage synergies," "paradigm shift," "cutting-edge solution."
+            23. Do not use filler clichés like "in today's world," "at the end of the day," "needless to say."
+            24. Do not pad the piece to reach a target length. Stop when the explanation is clear, complete, and satisfying.
             """
         }
     }
