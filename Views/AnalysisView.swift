@@ -45,6 +45,7 @@ struct AnalysisView: View {
     @State private var analysis: AnalysisSummary?
     @State private var currentError: AppError?
     @State private var selectedStyle: DraftStyle = .standard
+    @State private var showDeleteConfirmation = false
 
     private var session: InterviewSession? {
         sessions.first { $0.id == sessionId }
@@ -70,6 +71,26 @@ struct AnalysisView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+        .toolbar {
+            ToolbarItem(placement: .destructiveAction) {
+                Button("Delete", systemImage: "trash") {
+                    showDeleteConfirmation = true
+                }
+                .foregroundStyle(.red)
+            }
+        }
+        .confirmationDialog(
+            "Delete Session",
+            isPresented: $showDeleteConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                deleteSession()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will permanently delete this interview session and all associated data. This action cannot be undone.")
+        }
         .task {
             await loadOrGenerateAnalysis()
         }
@@ -487,6 +508,25 @@ struct AnalysisView: View {
             log("Failed to fetch previous session: \(error.localizedDescription)")
             return nil
         }
+    }
+
+    private func deleteSession() {
+        guard let session else { return }
+
+        log("Deleting session: \(session.id.uuidString)")
+
+        // Delete the session from SwiftData
+        modelContext.delete(session)
+
+        do {
+            try modelContext.save()
+            log("Session deleted successfully")
+        } catch {
+            log("Failed to delete session: \(error.localizedDescription)")
+        }
+
+        // Navigate back to home
+        appState.navigate(to: .home)
     }
 }
 

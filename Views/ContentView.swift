@@ -1516,8 +1516,20 @@ struct RecentConversationRow: View {
 
             Spacer()
 
+            // Analysis button - jump to analysis view
+            Button("View analysis", systemImage: "sparkles") {
+                onAnalysis()
+            }
+            .labelStyle(.iconOnly)
+            .font(.title3)
+            .foregroundStyle(.secondary)
+            .buttonStyle(.plain)
+            .accessibilityHint("View analysis with key points, themes, and generate essay")
+            .disabled(!hasCompletedSession)
+            .opacity(hasCompletedSession ? 1.0 : 0.3)
+
             // Follow-up button - continue the conversation
-            Button("Continue conversation", systemImage: "arrow.clockwise") {
+            Button("Continue conversation", systemImage: "bubble.left") {
                 onResume()
             }
             .labelStyle(.iconOnly)
@@ -1525,18 +1537,6 @@ struct RecentConversationRow: View {
             .foregroundStyle(.secondary)
             .buttonStyle(.plain)
             .accessibilityHint("Pick up where you left off with follow-up questions")
-            .disabled(!hasCompletedSession)
-            .opacity(hasCompletedSession ? 1.0 : 0.3)
-
-            // Analysis button - jump to analysis view
-            Button("View analysis", systemImage: "doc.richtext") {
-                onAnalysis()
-            }
-            .labelStyle(.iconOnly)
-            .font(.title3)
-            .foregroundStyle(.blue)
-            .buttonStyle(.plain)
-            .accessibilityHint("Jump to the analysis screen with key points, tensions, and writing style selection")
             .disabled(!hasCompletedSession)
             .opacity(hasCompletedSession ? 1.0 : 0.3)
 
