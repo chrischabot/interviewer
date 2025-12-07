@@ -1,4 +1,4 @@
-These come from a GPT 5.1 research prompt to summarize Zinsser's On Writing Well and other works translated into LLM focused writing rules, and is offered as one of the 4 writing styles available for use in the Writer stage:
+These come from a GPT 5.1 research prompt to summarize Zinsser's On Writing Well and other works translated into LLM focused writing rules. This document serves as a reference for the underlying principles that inform the Writer agent's prompts:
 
 # Rules for Writing Well
 

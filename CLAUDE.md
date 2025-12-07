@@ -284,7 +284,7 @@ enum NavigationState {
 - `PlanEditorView` - Edit sections & questions
 - `InterviewView` - Live voice UI with timer, transcript, agent meters
 - `AnalysisView` - Research goal answers, themes, quotes
-- `DraftView` - Markdown preview, 4 style options, export
+- `DraftView` - Markdown preview, 3 style options, export
 - `FollowUpView` - Analyze previous session, select topics for 6-min follow-up
 - `SettingsView` - API key management, audio device selection
 
@@ -587,7 +587,7 @@ actor KeychainManager {
 
 ### 6. Draft (DraftView)
 - Markdown preview
-- 4 style options: Standard, Punchy, Reflective, Zinsser
+- 3 style options: Standard, Punchy, Reflective
 - Copy / Export / Share
 
 ### 7. Follow-Up (FollowUpView)

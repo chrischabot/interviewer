@@ -837,16 +837,16 @@ Study the transcript for:
 Mirror these patterns. If they say "gnarly problem", don't write "complex challenge".
 ```
 
-### Zinsser Writing Principles
+### Writing Quality Principles
 
-The Writer follows William Zinsser's principles from "On Writing Well":
+The Writer incorporates key nonfiction principles:
 
 1. **Cut clutter** - Every word must earn its place
 2. **Be specific** - Concrete details over abstractions
 3. **Use active voice** - "We shipped it" not "It was shipped by us"
-4. **Write with humanity** - Sound like a person, not an institution
-5. **Unity of tense and mood** - Consistent throughout
-6. **The lead matters** - First paragraph must hook the reader
+4. **Sentence complexity** - 8/10 scale; compound/complex sentences with 20-35 words typical
+5. **Paragraph depth** - 4-6 sentences developing one idea fully
+6. **Trust readers** - No over-explaining; one example per point
 
 ### First-Person Ghostwriting
 

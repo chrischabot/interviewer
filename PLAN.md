@@ -107,7 +107,7 @@ A **voice-driven thinking partner** for subject-matter experts:
 
    * Writer agent generates:
      * At least one long-form essay draft (~1,200–1,800 words).
-     * Four style options: Standard, Punchy, Reflective, Zinsser (clear nonfiction).
+     * Three style options: Standard, Punchy, Reflective.
    * Essays written in **first person** as the author's voice (not third-party "one expert says...").
    * For follow-up sessions: combines original + follow-up transcripts into unified narrative.
 
@@ -883,7 +883,7 @@ struct Quote: Codable, Identifiable {
 @Model
 final class Draft {
     var id: UUID
-    var style: String  // "standard" | "punchy" | "reflective" | "zinsser"
+    var style: String  // "standard" | "punchy" | "reflective"
     var markdownContent: String
     var createdAt: Date
 
@@ -891,10 +891,9 @@ final class Draft {
 }
 
 enum DraftStyle: String, CaseIterable {
-    case standard   // Elegant prose with clear narrative arc
-    case punchy     // Direct, energetic, slightly provocative
-    case reflective // Thoughtful, contemplative pace
-    case zinsser    // Clear, concise nonfiction (On Writing Well rules)
+    case standard   // Conversational, surprising, like a Paul Graham essay
+    case punchy     // Crisp and energetic, ideas land fast
+    case reflective // Thoughtful pace, ideas unfold gradually
 }
 ```
 
@@ -1164,30 +1163,18 @@ Set as `session.instructions` for Realtime:
 
 ### 8.7 Writer agent prompt
 
-> You are a **ghostwriter** helping someone turn their spoken interview into a polished personal essay. The essay will be published as THEIR blog post, in THEIR voice, under THEIR name.
+> First-person essay for educated readers. Sentence complexity: 8/10. Compound and complex sentences with subordinate clauses—20-35 words typical. Ideas unfold WITHIN sentences via "and," "but," "because," "which," "while." Paragraphs: 4-6 sentences developing one idea fully.
 >
-> **Critical: This is FIRST PERSON writing.** You are not a journalist writing about "an expert." You are channeling the author's voice.
+> Use the author's words from the transcript. One example per point. Trust readers.
 >
-> Input:
-> – The AnalysisSummary.
-> – The original plan.
-> – Style preference (standard/punchy/reflective/zinsser).
-> – For follow-ups: both original and follow-up transcripts.
+> **Banned:** sentences under 12 words (except 2-3 per essay), single-sentence paragraphs (max 1), bullets, blockquotes, "Here's the thing," "That's the key," signposting, AI-speak, em dashes.
 >
-> **Writing Philosophy:**
-> – Write with wit and warmth—erudite without being stuffy.
-> – Let ideas flow naturally with varied sentence rhythm.
-> – **Avoid phantom argument patterns** like "not just X" or "more than merely Y" (argues against objections nobody raised).
-> – Start strong—no "In this essay, I'll discuss..."
-> – Show, don't tell—use concrete examples over abstract claims.
-> – End with resonance—leave something that lingers.
+> **Style options:**
+> – Standard: Conversational rhythm, ideas that surprise, warmth without saccharine.
+> – Punchy: Crisp sentences, ideas land fast, energy without hype.
+> – Reflective: Slower pace, ideas unfold, room for nuance and complexity.
 >
-> **Anti-patterns to avoid:**
-> – "It's not just about X" / "Not merely Y" / "More than just Z"
-> – "One expert says..." / "According to..." (this IS the expert speaking)
-> – Generic business-speak ("leverage," "synergy," "optimize")
->
-> Output: First-person essay (~1,200–1,800 words) with Markdown formatting.
+> Output: First-person essay with Markdown formatting. Length as required by the content.
 
 ### 8.8 Follow-Up agent prompt
 
@@ -1345,7 +1332,7 @@ actor KeychainManager {
      * Copy to clipboard
      * Export to `.md` file
      * Share (iOS share sheet / macOS share)
-     * Select from 4 styles (Standard, Punchy, Reflective, Zinsser)
+     * Select from 3 styles (Standard, Punchy, Reflective)
 
 ### 10.5 Follow-up Sessions
 
