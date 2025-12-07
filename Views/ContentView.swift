@@ -608,6 +608,7 @@ struct PlanEditorView: View {
     let planId: UUID
 
     @Query private var plans: [Plan]
+    @State private var showDeleteConfirmation = false
 
     private var plan: Plan? {
         plans.first { $0.id == planId }
@@ -670,12 +671,30 @@ struct PlanEditorView: View {
             .padding()
         }
         .toolbar {
+            ToolbarItem(placement: .destructiveAction) {
+                Button("Delete", systemImage: "trash") {
+                    showDeleteConfirmation = true
+                }
+                .foregroundStyle(.red)
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button("Start Interview") {
                     startInterview(plan)
                 }
                 .buttonStyle(.borderedProminent)
             }
+        }
+        .confirmationDialog(
+            "Delete Plan",
+            isPresented: $showDeleteConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                deletePlan(plan)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will permanently delete this interview plan and all associated sessions. This action cannot be undone.")
         }
     }
 
