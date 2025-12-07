@@ -65,12 +65,12 @@ final class AudioDeviceManager {
     }
 
     private init() {
-        // Load saved preferences
+        // Enumerate devices FIRST (before loading preferences)
+        refreshDevices()
+
+        // Now load saved preferences (didSet will find devices in the list)
         selectedInputDeviceID = UserDefaults.standard.string(forKey: "selectedInputDeviceID")
         selectedOutputDeviceID = UserDefaults.standard.string(forKey: "selectedOutputDeviceID")
-
-        // Enumerate devices
-        refreshDevices()
 
         #if os(macOS)
         // Listen for device changes

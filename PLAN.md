@@ -169,9 +169,11 @@ A **voice-driven thinking partner** for subject-matter experts:
 
 * **Language:**
   * Swift 6+, SwiftUI, Swift Concurrency (actors, `async`/`await`, AsyncStreams).
+  * Follow Swift & SwiftUI coding guidelines documented in `CLAUDE.md`.
 
 * **Persistence:**
   * **SwiftData** for local storage of sessions, plans, transcripts, drafts.
+  * Note: Avoid `@Attribute(.unique)` if planning CloudKit sync (not supported).
 
 ---
 
@@ -333,13 +335,14 @@ actor SessionState {
 }
 
 @MainActor
-class SessionViewModel: ObservableObject {
+@Observable
+final class SessionViewModel {
     let sessionState: SessionState
     let agentCoordinator: AgentCoordinator
     let realtimeClient: RealtimeClient
     let audioEngine: AudioEngine
 
-    // @Published properties mirror SessionState for SwiftUI
+    // Properties automatically observed by SwiftUI (no @Published needed)
 }
 ```
 
@@ -670,7 +673,7 @@ All models defined in Swift, persisted with SwiftData.
 ```swift
 @Model
 final class Plan {
-    @Attribute(.unique) var id: UUID
+    var id: UUID  // Note: @Attribute(.unique) removed for CloudKit compatibility
     var topic: String
     var researchGoal: String
     var angle: String
@@ -730,7 +733,7 @@ final class Question {
 ```swift
 @Model
 final class InterviewSession {
-    @Attribute(.unique) var id: UUID
+    var id: UUID  // Note: @Attribute(.unique) removed for CloudKit compatibility
     var startedAt: Date
     var endedAt: Date?
     var elapsedSeconds: Int
@@ -914,7 +917,10 @@ actor AgentCoordinator {
     private let analysisAgent: AnalysisAgent
     private let writerAgent: WriterAgent
 
-    @Published var agentActivity: [String: Double] = [:]
+    // Activity scores accessed via async methods (actors don't use @Published)
+    private var agentActivity: [String: Double] = [:]
+
+    func getAgentActivity() -> [String: Double] { agentActivity }
 
     init(apiKey: String) {
         let client = OpenAIClient(apiKey: apiKey)
