@@ -31,12 +31,14 @@ actor WriterAgent {
     ///   - plan: The interview plan
     ///   - style: Writing style
     ///   - previousTranscript: Optional transcript from a previous session (for follow-ups)
+    ///   - styleBullets: Optional voice style guide bullets to match author's voice
     func writeDraft(
         transcript: [TranscriptEntry],
         analysis: AnalysisSummary,
         plan: PlanSnapshot,
         style: DraftStyle = .standard,
-        previousTranscript: [TranscriptEntry]? = nil
+        previousTranscript: [TranscriptEntry]? = nil,
+        styleBullets: [String]? = nil
     ) async throws -> String {
         lastActivityTime = Date()
 
@@ -52,7 +54,7 @@ actor WriterAgent {
 
         let writerResponse: WriterResponse = try await llm.chatStructured(
             messages: [
-                Message.system(systemPrompt(for: style)),
+                Message.system(systemPrompt(for: style, styleBullets: styleBullets)),
                 Message.user(userPrompt)
             ],
             model: modelConfig.insightModel,
@@ -73,12 +75,14 @@ actor WriterAgent {
     ///   - plan: The interview plan
     ///   - style: Writing style
     ///   - previousTranscript: Optional transcript from a previous session (for follow-ups)
+    ///   - styleBullets: Optional voice style guide bullets to match author's voice
     func writeDraftStreaming(
         transcript: [TranscriptEntry],
         analysis: AnalysisSummary,
         plan: PlanSnapshot,
         style: DraftStyle = .standard,
-        previousTranscript: [TranscriptEntry]? = nil
+        previousTranscript: [TranscriptEntry]? = nil,
+        styleBullets: [String]? = nil
     ) -> AsyncThrowingStream<String, Error> {
         lastActivityTime = Date()
 
@@ -94,7 +98,7 @@ actor WriterAgent {
 
         return llm.chatTextStreaming(
             messages: [
-                Message.system(systemPrompt(for: style)),
+                Message.system(systemPrompt(for: style, styleBullets: styleBullets)),
                 Message.user(userPrompt)
             ],
             model: modelConfig.insightModel,
@@ -204,8 +208,23 @@ actor WriterAgent {
         }
     }
 
-    private func systemPrompt(for style: DraftStyle) -> String {
-        """
+    private func systemPrompt(for style: DraftStyle, styleBullets: [String]? = nil) -> String {
+        var prompt = ""
+
+        // Prepend voice style guide if provided
+        if let bullets = styleBullets, !bullets.isEmpty {
+            prompt += """
+            ## Author's Voice Profile
+
+            Match these voice characteristics throughout the essay:
+            \(bullets.map { "- \($0)" }.joined(separator: "\n"))
+
+            ---
+
+            """
+        }
+
+        prompt += """
         First-person essay for educated readers. Sentence complexity: 8/10. Compound and complex sentences with subordinate clauses—20-35 words typical. Ideas unfold WITHIN sentences via "and," "but," "because," "which," "while." Paragraphs: 4-6 sentences developing one idea fully.
 
         Use the author's words from the transcript. One example per point. Trust readers.
@@ -214,6 +233,8 @@ actor WriterAgent {
 
         \(styleGuidance(for: style))
         """
+
+        return prompt
     }
 
     // MARK: - JSON Schema

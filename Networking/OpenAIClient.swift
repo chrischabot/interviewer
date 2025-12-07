@@ -264,6 +264,22 @@ struct OpenAIErrorResponse: Codable {
     }
 }
 
+// MARK: - Whisper Transcription Types
+
+struct WhisperResponse: Codable {
+    let text: String
+    let segments: [WhisperSegment]?
+    let language: String?
+    let duration: Double?
+}
+
+struct WhisperSegment: Codable {
+    let id: Int
+    let start: Double
+    let end: Double
+    let text: String
+}
+
 /// Streaming response chunk from OpenAI
 struct StreamChunk: Codable {
     let id: String
@@ -352,12 +368,19 @@ actor OpenAIClient {
 
     private let baseURL = "https://api.openai.com/v1"
     private let session: URLSession
+    private let audioSession: URLSession  // Longer timeout for Whisper transcription
 
     private init() {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 120  // writer/analysis calls can be long
         config.timeoutIntervalForResource = 300
         self.session = URLSession(configuration: config)
+
+        // Audio transcription can take 3+ minutes for long files
+        let audioConfig = URLSessionConfiguration.default
+        audioConfig.timeoutIntervalForRequest = 600  // 10 minutes for long audio
+        audioConfig.timeoutIntervalForResource = 600
+        self.audioSession = URLSession(configuration: audioConfig)
     }
 
     // MARK: - Retry Configuration
@@ -641,6 +664,114 @@ actor OpenAIClient {
             return true
         } catch OpenAIError.httpError(let statusCode, _) where statusCode == 401 {
             return false
+        }
+    }
+
+    // MARK: - Audio Transcription (Whisper)
+
+    /// Transcribe audio file using OpenAI Whisper API
+    /// - Parameters:
+    ///   - fileURL: Local URL to audio file (m4a, mp3, wav, etc.)
+    ///   - language: Optional language hint (ISO-639-1 code, e.g., "en")
+    ///   - prompt: Optional prompt to guide transcription style
+    /// - Returns: WhisperResponse with full text and optional segments
+    func transcribeAudio(
+        fileURL: URL,
+        language: String? = nil,
+        prompt: String? = nil
+    ) async throws -> WhisperResponse {
+        let apiKey = try await getAPIKey()
+
+        guard let url = URL(string: "\(baseURL)/audio/transcriptions") else {
+            throw OpenAIError.invalidURL
+        }
+
+        // Check file size (Whisper limit is 25MB)
+        let fileAttributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+        if let fileSize = fileAttributes[.size] as? Int, fileSize > 25 * 1024 * 1024 {
+            throw OpenAIError.httpError(statusCode: 413, message: "Audio file exceeds 25MB limit")
+        }
+
+        // Read audio file data
+        let audioData = try Data(contentsOf: fileURL)
+        let filename = fileURL.lastPathComponent
+
+        // Build multipart/form-data request
+        let boundary = UUID().uuidString
+        var bodyData = Data()
+
+        // Add model field
+        bodyData.append("--\(boundary)\r\n".data(using: .utf8)!)
+        bodyData.append("Content-Disposition: form-data; name=\"model\"\r\n\r\n".data(using: .utf8)!)
+        bodyData.append("whisper-1\r\n".data(using: .utf8)!)
+
+        // Add response_format field for verbose JSON with segments
+        bodyData.append("--\(boundary)\r\n".data(using: .utf8)!)
+        bodyData.append("Content-Disposition: form-data; name=\"response_format\"\r\n\r\n".data(using: .utf8)!)
+        bodyData.append("verbose_json\r\n".data(using: .utf8)!)
+
+        // Add optional language
+        if let language {
+            bodyData.append("--\(boundary)\r\n".data(using: .utf8)!)
+            bodyData.append("Content-Disposition: form-data; name=\"language\"\r\n\r\n".data(using: .utf8)!)
+            bodyData.append("\(language)\r\n".data(using: .utf8)!)
+        }
+
+        // Add optional prompt
+        if let prompt {
+            bodyData.append("--\(boundary)\r\n".data(using: .utf8)!)
+            bodyData.append("Content-Disposition: form-data; name=\"prompt\"\r\n\r\n".data(using: .utf8)!)
+            bodyData.append("\(prompt)\r\n".data(using: .utf8)!)
+        }
+
+        // Add audio file
+        bodyData.append("--\(boundary)\r\n".data(using: .utf8)!)
+        bodyData.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
+        bodyData.append("Content-Type: audio/mpeg\r\n\r\n".data(using: .utf8)!)
+        bodyData.append(audioData)
+        bodyData.append("\r\n".data(using: .utf8)!)
+
+        // Close boundary
+        bodyData.append("--\(boundary)--\r\n".data(using: .utf8)!)
+
+        return try await withRetry { [audioSession] in
+            let startedAt = Date()
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            request.httpBody = bodyData
+
+            log("POST /audio/transcriptions file=\(filename) size=\(audioData.count / 1024)KB (10min timeout)")
+
+            let (data, response) = try await audioSession.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw OpenAIError.invalidResponse
+            }
+
+            let elapsed = String(format: "%.2fs", Date().timeIntervalSince(startedAt))
+
+            if httpResponse.statusCode != 200 {
+                let errorMessage: String?
+                if let errorResponse = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data) {
+                    errorMessage = errorResponse.error.message
+                } else {
+                    errorMessage = String(data: data, encoding: .utf8)
+                }
+                log("HTTP \(httpResponse.statusCode) \(elapsed) error=\(errorMessage ?? "unknown")")
+                throw OpenAIError.httpError(statusCode: httpResponse.statusCode, message: errorMessage)
+            }
+
+            do {
+                let decoder = JSONDecoder()
+                let whisperResponse = try decoder.decode(WhisperResponse.self, from: data)
+                log("HTTP 200 \(elapsed) duration=\(whisperResponse.duration ?? 0)s segments=\(whisperResponse.segments?.count ?? 0)")
+                return whisperResponse
+            } catch {
+                log("Decoding error \(elapsed): \(error.localizedDescription)")
+                throw OpenAIError.decodingError(error)
+            }
         }
     }
 }

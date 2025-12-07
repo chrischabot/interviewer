@@ -44,6 +44,11 @@ final class AppState {
     var selectedDraftStyle: DraftStyle = .standard
     var currentAnalysis: AnalysisSummary?
 
+    // MARK: - YouTube Import State
+
+    var showYouTubeImport = false
+    var importedStyleGuide: StyleGuide?
+
     private init() {
         Task { await bootstrapKeys() }
     }

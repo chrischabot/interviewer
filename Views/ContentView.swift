@@ -252,20 +252,41 @@ struct HomeView: View {
                 .frame(maxWidth: 600)
 
                 // Advanced options toggle
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        showAdvancedOptions.toggle()
+                HStack(spacing: 16) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showAdvancedOptions.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text("Options")
+                                .font(.caption)
+                            Image(systemName: showAdvancedOptions ? "chevron.up" : "chevron.down")
+                                .font(.caption2)
+                        }
+                        .foregroundStyle(.secondary)
                     }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text("Options")
-                            .font(.caption)
-                        Image(systemName: showAdvancedOptions ? "chevron.up" : "chevron.down")
-                            .font(.caption2)
+                    .buttonStyle(.plain)
+
+                    #if os(macOS)
+                    Text("or")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+
+                    Button {
+                        appState.showYouTubeImport = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "play.rectangle")
+                                .font(.caption)
+                            Text("Import from YouTube")
+                                .font(.caption)
+                        }
+                        .foregroundStyle(.secondary)
                     }
-                    .foregroundStyle(.secondary)
+                    .buttonStyle(.plain)
+                    #endif
                 }
-                .buttonStyle(.plain)
 
                 // Advanced options
                 if showAdvancedOptions {
@@ -348,6 +369,11 @@ struct HomeView: View {
                 PlanGenerationOverlay(stage: generationStage)
             }
         }
+        #if os(macOS)
+        .sheet(isPresented: Bindable(appState).showYouTubeImport) {
+            YouTubeImportSheet()
+        }
+        #endif
     }
 
     private var canSubmit: Bool {

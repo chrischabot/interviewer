@@ -64,7 +64,7 @@ One of the things that's interesting for those of you who care is you can follow
 
 DevRel resources, one, are really hard to find. These programs are really hard to build. They're really expensive, and chances are you're really busy. You need to be focused on cost. And so, do you know if you're generating word of mouth? NPS or some sort of referral metric is a good indication. This is where you ask somebody who's signed up how likely they are to recommend your service to somebody else. From there, are you getting sign-ups? Do they activate? And then once they sign up, are they actually using it? Are they putting the effort in? And then once they put that effort in, are they engaging?
 
-We can't just copy Twilio. We can't just copy what Apple does. We have this interesting opportunity where we have to go rebuild developer relations and developer experience at a brand new organization from scratch. And so, I'm Alex Salazar, the former CEO and founder of Stormpath. We built an identity API and were recently acquired by Okta. I now run their developer platform, building the same exact product. We're going to be talking openly about our experiences that we're having to build out developer experience and developer relations so that you can build a successful DevRel and DevEx program in your organization and be confident that you're doing the best thing for the business.
+We can't just copy Twilio. We can't just copy what Apple does. We have this interesting opportunity where we have to go rebuild developer relations and developer experience at a brand new organization from scratch. 
 
 ## Make ROI Everyone’s Problem, Not a Dark Art
 

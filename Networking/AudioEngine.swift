@@ -166,6 +166,8 @@ final class AudioEngine: @unchecked Sendable {
     }
 
     #if os(iOS)
+    private var interruptionObserver: NSObjectProtocol?
+
     private func setupAudioSession() throws {
         let session = AVAudioSession.sharedInstance()
 
@@ -174,6 +176,58 @@ final class AudioEngine: @unchecked Sendable {
             try session.setActive(true)
         } catch {
             throw AudioEngineError.configurationFailed(error.localizedDescription)
+        }
+
+        // Register for audio interruption notifications (phone calls, Siri, etc.)
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: session,
+            queue: .main
+        ) { [weak self] notification in
+            self?.handleAudioInterruption(notification)
+        }
+    }
+
+    private func handleAudioInterruption(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
+            return
+        }
+
+        switch type {
+        case .began:
+            // Interruption started (e.g., phone call)
+            log("Audio session interrupted - pausing capture")
+            stopCapturing()
+            playerNode.pause()
+
+        case .ended:
+            // Interruption ended - check if we should resume
+            if let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {
+                let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
+                if options.contains(.shouldResume) {
+                    log("Audio interruption ended - resuming")
+                    do {
+                        try AVAudioSession.sharedInstance().setActive(true)
+                        if !engine.isRunning {
+                            try engine.start()
+                        }
+                        playerNode.play()
+                    } catch {
+                        log("Failed to resume after interruption: \(error.localizedDescription)")
+                    }
+                }
+            }
+
+        @unknown default:
+            break
+        }
+    }
+
+    deinit {
+        if let observer = interruptionObserver {
+            NotificationCenter.default.removeObserver(observer)
         }
     }
     #endif

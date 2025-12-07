@@ -1,12 +1,41 @@
 import Foundation
 import SwiftData
 
+// MARK: - Session Type
+
+enum SessionType: String, Codable, CaseIterable {
+    case interviewed  // Live voice interview
+    case imported     // YouTube/external content
+
+    var displayName: String {
+        switch self {
+        case .interviewed: return "Interview"
+        case .imported: return "Import"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .interviewed: return "mic.fill"
+        case .imported: return "play.rectangle.fill"
+        }
+    }
+}
+
+// MARK: - Interview Session Model
+
 @Model
 final class InterviewSession {
     @Attribute(.unique) var id: UUID
     var startedAt: Date
     var endedAt: Date?
     var elapsedSeconds: Int
+
+    /// Type of session: interviewed (live) or imported (YouTube, etc.)
+    var sessionType: String = SessionType.interviewed.rawValue
+
+    /// Source URL for imported content (YouTube URL, etc.)
+    var sourceURL: String?
 
     var plan: Plan?
 
@@ -27,17 +56,29 @@ final class InterviewSession {
         startedAt: Date = Date(),
         endedAt: Date? = nil,
         elapsedSeconds: Int = 0,
-        plan: Plan? = nil
+        plan: Plan? = nil,
+        sessionType: SessionType = .interviewed,
+        sourceURL: String? = nil
     ) {
         self.id = id
         self.startedAt = startedAt
         self.endedAt = endedAt
         self.elapsedSeconds = elapsedSeconds
         self.plan = plan
+        self.sessionType = sessionType.rawValue
+        self.sourceURL = sourceURL
     }
 
     var isCompleted: Bool {
         endedAt != nil
+    }
+
+    var isImported: Bool {
+        sessionType == SessionType.imported.rawValue
+    }
+
+    var type: SessionType {
+        SessionType(rawValue: sessionType) ?? .interviewed
     }
 
     var formattedDuration: String {

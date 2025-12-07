@@ -53,6 +53,10 @@
 		F3F9907F6830C0A49BCB84D1 /* KeychainManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = E17D1687B3ABAF53F3F8D465 /* KeychainManager.swift */; };
 		FBDB67ACE52F42627D5A65D6 /* FollowUpDataFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7B35B4DED40514BB64FE622 /* FollowUpDataFlowTests.swift */; };
 		FC4A934375BDCA02280B5584 /* NotesStateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 263BC1E50083C861C25EA0CC /* NotesStateModel.swift */; };
+		AAAA11111111111111111111 /* YouTubeDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBBB11111111111111111111 /* YouTubeDownloader.swift */; };
+		AAAA22222222222222222222 /* ReversePlannerAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBBB22222222222222222222 /* ReversePlannerAgent.swift */; };
+		AAAA33333333333333333333 /* StyleExtractorAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBBB33333333333333333333 /* StyleExtractorAgent.swift */; };
+		AAAA44444444444444444444 /* YouTubeImportSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBBB44444444444444444444 /* YouTubeImportSheet.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -115,6 +119,10 @@
 		EDF55E9147D96D42024558B8 /* PhaseTransitionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhaseTransitionTests.swift; sourceTree = "<group>"; };
 		F1662640C486268B403F4037 /* OrchestratorDecisionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrchestratorDecisionTests.swift; sourceTree = "<group>"; };
 		FE8895B263AE744BA6834FE0 /* AnalysisView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalysisView.swift; sourceTree = "<group>"; };
+		BBBB11111111111111111111 /* YouTubeDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubeDownloader.swift; sourceTree = "<group>"; };
+		BBBB22222222222222222222 /* ReversePlannerAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReversePlannerAgent.swift; sourceTree = "<group>"; };
+		BBBB33333333333333333333 /* StyleExtractorAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StyleExtractorAgent.swift; sourceTree = "<group>"; };
+		BBBB44444444444444444444 /* YouTubeImportSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubeImportSheet.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -182,6 +190,8 @@
 				7C8F7A0B7A9E922D965A65EB /* OrchestratorAgent.swift */,
 				268B1F5A5713C4FC39A4A989 /* PlannerAgent.swift */,
 				B99984FB8373527CC45789B7 /* ResearcherAgent.swift */,
+				BBBB22222222222222222222 /* ReversePlannerAgent.swift */,
+				BBBB33333333333333333333 /* StyleExtractorAgent.swift */,
 				EA1294701348B12F966AE4F5 /* WriterAgent.swift */,
 			);
 			path = Agents;
@@ -196,6 +206,7 @@
 				779901F592AEC1BD7B52C77C /* LLMProvider.swift */,
 				4260C09EC0F780BB4CB812A7 /* OpenAIClient.swift */,
 				1E828423F30135BC9C6A424B /* RealtimeClient.swift */,
+				BBBB11111111111111111111 /* YouTubeDownloader.swift */,
 			);
 			path = Networking;
 			sourceTree = "<group>";
@@ -210,6 +221,7 @@
 				AF84110569E357865BD36186 /* LiquidGlassComponents.swift */,
 				8E98BD5D5B683CB6F79313DB /* SettingsView.swift */,
 				35A7A250F675D15806382E58 /* VoiceOrbView.swift */,
+				BBBB44444444444444444444 /* YouTubeImportSheet.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -388,6 +400,10 @@
 				6654FA389640E4C1A1C0ED96 /* StructuredLogger.swift in Sources */,
 				F3235DADA94016B25BDFC30D /* VoiceOrbView.swift in Sources */,
 				E4552F6A5428C088D31306ED /* WriterAgent.swift in Sources */,
+				AAAA11111111111111111111 /* YouTubeDownloader.swift in Sources */,
+				AAAA22222222222222222222 /* ReversePlannerAgent.swift in Sources */,
+				AAAA33333333333333333333 /* StyleExtractorAgent.swift in Sources */,
+				AAAA44444444444444444444 /* YouTubeImportSheet.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -406,19 +422,31 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = Interviewer.entitlements;
-				CODE_SIGN_IDENTITY = "Developer ID Application: The Photo Map LLC (28FC5D45XH)";
+				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = Interviewer.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application: The Photo Map LLC (28FC5D45XH)";
 				COMBINE_HIDPI_IMAGES = YES;
-				ENABLE_HARDENED_RUNTIME = YES;
+				"ENABLE_HARDENED_RUNTIME[sdk=macosx*]" = YES;
 				INFOPLIST_FILE = Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = (
+				"LD_RUNPATH_SEARCH_PATHS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LD_RUNPATH_SEARCH_PATHS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.thephotomap.Interviewer;
 				PRODUCT_NAME = Interviewer;
 				PROVISIONING_PROFILE_SPECIFIER = "";
-				SDKROOT = macosx;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};
@@ -474,7 +502,8 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				CODE_SIGN_IDENTITY = "Developer ID Application: The Photo Map LLC (28FC5D45XH)";
+				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application: The Photo Map LLC (28FC5D45XH)";
 				CODE_SIGN_STYLE = Manual;
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
@@ -490,16 +519,20 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.0.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
-				SDKROOT = macosx;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};
@@ -536,7 +569,8 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				CODE_SIGN_IDENTITY = "Developer ID Application: The Photo Map LLC (28FC5D45XH)";
+				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application: The Photo Map LLC (28FC5D45XH)";
 				CODE_SIGN_STYLE = Manual;
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
@@ -558,6 +592,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.0.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
@@ -565,10 +600,13 @@
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
-				SDKROOT = macosx;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
 		};
@@ -576,19 +614,31 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = Interviewer.entitlements;
-				CODE_SIGN_IDENTITY = "Developer ID Application: The Photo Map LLC (28FC5D45XH)";
+				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = Interviewer.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application: The Photo Map LLC (28FC5D45XH)";
 				COMBINE_HIDPI_IMAGES = YES;
-				ENABLE_HARDENED_RUNTIME = YES;
+				"ENABLE_HARDENED_RUNTIME[sdk=macosx*]" = YES;
 				INFOPLIST_FILE = Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = (
+				"LD_RUNPATH_SEARCH_PATHS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LD_RUNPATH_SEARCH_PATHS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.thephotomap.Interviewer;
 				PRODUCT_NAME = Interviewer;
 				PROVISIONING_PROFILE_SPECIFIER = "";
-				SDKROOT = macosx;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
 		};

@@ -28,6 +28,10 @@ actor AgentCoordinator {
     private var writerAgent: WriterAgent
     private var followUpAgent: FollowUpAgent
 
+    // Import-related agents
+    private var reversePlannerAgent: ReversePlannerAgent
+    private var styleExtractorAgent: StyleExtractorAgent
+
     // Accumulated state during interview
     private var accumulatedResearch: [ResearchItem] = []
     private var askedQuestionIds: Set<String> = []
@@ -71,6 +75,8 @@ actor AgentCoordinator {
         self.analysisAgent = AnalysisAgent(client: adapter, modelConfig: modelConfig)
         self.writerAgent = WriterAgent(client: adapter, modelConfig: modelConfig)
         self.followUpAgent = FollowUpAgent(client: adapter, modelConfig: modelConfig)
+        self.reversePlannerAgent = ReversePlannerAgent(client: adapter, modelConfig: modelConfig)
+        self.styleExtractorAgent = StyleExtractorAgent(client: adapter, modelConfig: modelConfig)
     }
 
     func updateLLM(client: LLMClient, modelConfig: LLMModelConfig) {
@@ -83,6 +89,8 @@ actor AgentCoordinator {
         self.analysisAgent = AnalysisAgent(client: client, modelConfig: modelConfig)
         self.writerAgent = WriterAgent(client: client, modelConfig: modelConfig)
         self.followUpAgent = FollowUpAgent(client: client, modelConfig: modelConfig)
+        self.reversePlannerAgent = ReversePlannerAgent(client: client, modelConfig: modelConfig)
+        self.styleExtractorAgent = StyleExtractorAgent(client: client, modelConfig: modelConfig)
     }
 
     // MARK: - Session Management
@@ -865,6 +873,88 @@ actor AgentCoordinator {
             }
         }
     }
+    // MARK: - YouTube Import (Phase: Import)
+
+    /// Generate a reverse plan from a transcript (for imported content like YouTube videos)
+    func generateReversePlan(from transcript: String) async throws -> ReversePlanResponse {
+        updateActivity(agent: "planner", score: 1.0)
+        defer { updateActivity(agent: "planner", score: 0.5) }
+
+        return try await reversePlannerAgent.generatePlan(from: transcript)
+    }
+
+    /// Extract voice style from past sessions
+    /// - Parameter input: StyleExtractionInput containing drafts, quotes, and utterances
+    /// - Returns: StyleGuide with 4-6 bullet points describing the author's voice
+    func extractVoiceStyle(from input: StyleExtractionInput) async throws -> StyleGuide {
+        updateActivity(agent: "style", score: 1.0)
+        defer { updateActivity(agent: "style", score: 0.5) }
+
+        return try await styleExtractorAgent.extractStyle(from: input)
+    }
+
+    /// Generate a draft essay with style guide (for imported content)
+    /// - Parameters:
+    ///   - transcript: The transcript entries
+    ///   - analysis: Analysis summary
+    ///   - plan: The plan snapshot
+    ///   - style: Writing style
+    ///   - styleBullets: Voice style guide bullets to match author's voice
+    func writeDraftWithStyle(
+        transcript: [TranscriptEntry],
+        analysis: AnalysisSummary,
+        plan: PlanSnapshot,
+        style: DraftStyle,
+        styleBullets: [String]
+    ) async throws -> String {
+        updateActivity(agent: "writer", score: 1.0)
+        defer { updateActivity(agent: "writer", score: 0.5) }
+
+        return try await writerAgent.writeDraft(
+            transcript: transcript,
+            analysis: analysis,
+            plan: plan,
+            style: style,
+            previousTranscript: nil,
+            styleBullets: styleBullets
+        )
+    }
+
+    /// Stream a draft essay with style guide (for imported content)
+    func writeDraftStreamingWithStyle(
+        transcript: [TranscriptEntry],
+        analysis: AnalysisSummary,
+        plan: PlanSnapshot,
+        style: DraftStyle,
+        styleBullets: [String]
+    ) -> AsyncThrowingStream<String, Error> {
+        updateActivity(agent: "writer", score: 1.0)
+
+        return AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    let stream = await writerAgent.writeDraftStreaming(
+                        transcript: transcript,
+                        analysis: analysis,
+                        plan: plan,
+                        style: style,
+                        previousTranscript: nil,
+                        styleBullets: styleBullets
+                    )
+
+                    for try await chunk in stream {
+                        continuation.yield(chunk)
+                    }
+
+                    updateActivity(agent: "writer", score: 0.5)
+                    continuation.finish()
+                } catch {
+                    updateActivity(agent: "writer", score: 0.0)
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
 }
 
 // MARK: - Plan Conversion Helpers
@@ -905,5 +995,51 @@ extension PlannerResponse {
         }
 
         return plan
+    }
+}
+
+extension ReversePlanResponse {
+    /// Convert ReversePlanResponse to SwiftData Plan model (for imported content)
+    func toPlan() -> Plan {
+        let plan = Plan(
+            topic: topic,
+            researchGoal: researchGoal,
+            angle: angle,
+            targetSeconds: 0  // Imported content doesn't have a target duration
+        )
+
+        for (index, section) in sections.enumerated() {
+            let newSection = Section(
+                title: section.title,
+                importance: "medium",  // Default importance for reverse-engineered sections
+                backbone: true,
+                estimatedSeconds: 0,
+                sortOrder: index
+            )
+
+            // ReversePlanSection doesn't have questions, but we can create summary-based ones
+            // For now, just create the section structure
+            newSection.plan = plan
+            plan.sections.append(newSection)
+        }
+
+        return plan
+    }
+
+    /// Convert to PlanSnapshot for agent usage
+    func toSnapshot() -> PlanSnapshot {
+        PlanSnapshot(
+            topic: topic,
+            researchGoal: researchGoal,
+            angle: angle,
+            sections: sections.enumerated().map { index, section in
+                PlanSnapshot.SectionSnapshot(
+                    id: UUID().uuidString,
+                    title: section.title,
+                    importance: "medium",
+                    questions: []  // No questions for reverse-planned content
+                )
+            }
+        )
     }
 }
