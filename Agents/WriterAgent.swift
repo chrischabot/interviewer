@@ -225,9 +225,10 @@ actor WriterAgent {
         Output the essay as clean markdown with:
         - # for the main title
         - ## for section headers
-        - > for pull quotes (the author's own memorable lines, formatted for emphasis)
         - *italics* for emphasis
         - --- for section breaks if needed
+
+        **IMPORTANT: No blockquotes.** Do NOT use `>` for pull quotes. This is a first-person essay, not an interview write-up. Weave the author's memorable phrases and insights naturally into flowing sentences and paragraphs. The author's voice should feel continuous, not interrupted by their own words set apart as quotations.
 
         Target length: 1200-2000 words (adjust based on content richness)
         """
@@ -299,6 +300,9 @@ actor WriterAgent {
         - "In this post, I will..." (just do it)
         - "As mentioned earlier..." (trust the reader)
         - Generic business-speak ("leverage", "synergy", "optimize")
+        - Blockquotes or pull quotes (this is first-person writing, not an interview write-up)
+
+        **Voice continuity:** Never use `>` blockquotes to highlight the author's own words. This creates a jarring effect where the author appears to be quoting themselves. Instead, weave memorable phrases and key insights naturally into flowing paragraphs. The essay should read as one continuous voice, not as a journalist presenting an interview subject's soundbites.
         """
 
         switch style {
@@ -371,6 +375,7 @@ actor WriterAgent {
             22. Do not use corporate buzzwords such as "leverage synergies," "paradigm shift," "cutting-edge solution."
             23. Do not use filler clichés like "in today's world," "at the end of the day," "needless to say."
             24. Do not pad the piece to reach a target length. Stop when the explanation is clear, complete, and satisfying.
+            25. Do not use blockquotes (`>`) to highlight the author's own words. This is first-person writing, not an interview write-up. Weave memorable phrases naturally into flowing paragraphs. The essay should read as one continuous voice.
             """
         }
     }
