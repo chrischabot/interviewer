@@ -206,7 +206,7 @@ actor WriterAgent {
 
     private func systemPrompt(for style: DraftStyle) -> String {
         """
-        First-person essay for educated readers. Sentence complexity: 8/10. Compound and complex sentences with subordinate clauses—20-35 words typical. Ideas unfold WITHIN sentences via "and," "but," "because," "which," "while." Paragraphs: 4-6 sentences. This is prose for reading, not a LinkedIn post for scanning.
+        First-person essay for educated readers. Sentence complexity: 8/10. Compound and complex sentences with subordinate clauses—20-35 words typical. Ideas unfold WITHIN sentences via "and," "but," "because," "which," "while." Paragraphs: 4-6 sentences developing one idea fully.
 
         Use the author's words from the transcript. One example per point. Trust readers.
 
