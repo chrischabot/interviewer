@@ -360,24 +360,28 @@ struct HomeView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            VStack(spacing: 8) {
-                ForEach(recentPlans.prefix(5)) { plan in
-                    RecentConversationRow(
-                        plan: plan,
-                        hasCompletedSession: hasCompletedSession(for: plan),
-                        onResume: {
-                            startFollowUp(for: plan)
-                        },
-                        onAnalysis: {
-                            goToAnalysis(for: plan)
-                        },
-                        onFresh: {
-                            appState.navigate(to: .planning(planId: plan.id))
-                        }
-                    )
+            ScrollView {
+                VStack(spacing: 8) {
+                    ForEach(recentPlans) { plan in
+                        RecentConversationRow(
+                            plan: plan,
+                            hasCompletedSession: hasCompletedSession(for: plan),
+                            onResume: {
+                                startFollowUp(for: plan)
+                            },
+                            onAnalysis: {
+                                goToAnalysis(for: plan)
+                            },
+                            onFresh: {
+                                appState.navigate(to: .planning(planId: plan.id))
+                            }
+                        )
+                    }
                 }
+                .frame(maxWidth: 500)
             }
-            .frame(maxWidth: 500)
+            .scrollIndicators(.automatic)
+            .frame(maxHeight: 300)
         }
         .padding(.horizontal, 32)
         .padding(.bottom, 32)
