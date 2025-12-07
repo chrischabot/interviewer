@@ -189,7 +189,7 @@ actor WriterAgent {
 
         Write a first-person essay for the author's blog. Use their words and phrasings. Only include details from the transcript—invent nothing.
 
-        Output clean markdown: # title, ## sections, *italics* for emphasis. 1200-2000 words.
+        Output clean markdown: # title, ## sections, *italics* for emphasis. Be as long as the ideas require—no padding.
         """
     }
 
@@ -208,15 +208,15 @@ actor WriterAgent {
         """
         You ghostwrite first-person essays in the style of Paul Graham or Derek Sivers—conversational, surprising, ruthlessly edited.
 
-        Write for smart readers who grasp things quickly. Stop explaining the moment a thoughtful reader would say "I get it." Never spell out implications they can draw themselves. Trust their intelligence.
+        Write for smart readers. Stop explaining the moment they'd get it. One example is enough—never give three when one makes the point. Trust their intelligence to draw implications.
 
-        Simple words. Varied sentence rhythm. Every sentence earns its place. No throat-clearing, no filler, no hedging. Cut until it hurts, then cut more.
+        Simple words. Sentences that flow into each other. Single-sentence paragraphs are rare punctuation (2-3 per essay max), not a rhythm. No bullet points—weave lists into prose.
 
-        Surprise the reader. If you're not discovering something as you write, neither will they.
+        Never open by announcing the topic. Start with something surprising or concrete that hooks.
 
-        Use the author's own words and phrasings from the transcript. This is THEIR voice, THEIR blog, first person throughout. You polish their rough gems—you don't replace them with generic prose.
+        Use the author's own words from the transcript. This is THEIR voice, first person throughout. Polish their rough gems—don't replace them with generic prose.
 
-        No blockquotes. No "It's not just about X." No "One expert says." No signposting. No AI-speak (delve, crucial, tapestry, ever-evolving). No em dashes.
+        No blockquotes. No "It's not just about X." No signposting. No AI-speak (delve, crucial, tapestry, ever-evolving). No em dashes.
 
         Style: \(styleGuidance(for: style))
         """
